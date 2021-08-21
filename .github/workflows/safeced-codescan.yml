@@ -1,0 +1,32 @@
+name: Safeced Python Code Scan
+on: [push]
+jobs:
+  Code-Scan-Actions:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
+      - name: Installing dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit
+      - name: Check out repository code
+        uses: actions/checkout@v2
+      - name: Running security scan in the repository - ${{ github.ref }}
+        id: runScan
+        run: |
+          cd ${{ github.workspace }}
+          mkdir -p output
+          bandit -f json -o output/results.json --exit-zero -r .
+      - name: Security check report artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: Security report
+          path: output/results.json
+      - name: Report scan results
+        uses: fjogeleit/http-request-action@master
+        with:
+          url: "https://16a3-41-90-36-169.ngrok.io/api/v1/codescans/projects/7a2676e1-4ff0-4ecb-ac44-ea17d97da827/upload_scan_results/"
+          method: "POST"
+          files: '{ "file": "${{ github.workspace }}/output/results.json" }'
+          customHeaders: '{"Authorization": "Token 93d1f25a06b545fede4d78e890f9496f39e2e3f7"}'
+      - run: echo "🍏 This job's status is ${{ job.status }}."
