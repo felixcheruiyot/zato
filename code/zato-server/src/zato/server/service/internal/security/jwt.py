@@ -18,7 +18,7 @@ from uuid import uuid4
 from cryptography.fernet import Fernet
 
 # Zato
-from zato.common import SEC_DEF_TYPE
+from zato.common.api import SEC_DEF_TYPE
 from zato.common.broker_message import SECURITY
 from zato.common.odb.model import Cluster, JWT
 from zato.common.odb.query import jwt_list
@@ -233,7 +233,7 @@ class LogIn(Service):
     def handle(self, _sec_type=SEC_DEF_TYPE.JWT):
 
         try:
-            auth_info = JWTBackend(self.kvdb, self.odb, self.server.decrypt, self.server.jwt_secret).authenticate(
+            auth_info = JWTBackend(self.odb, self.server.decrypt, self.server.jwt_secret).authenticate(
                 self.request.input.username, self.server.decrypt(self.request.input.password))
 
             if auth_info:

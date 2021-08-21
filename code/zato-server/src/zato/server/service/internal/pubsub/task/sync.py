@@ -12,13 +12,10 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 from datetime import datetime
 from operator import itemgetter
 
-# Bunch
-from bunch import bunchify
-
 # Zato
 from zato.common.exception import BadRequest
+from zato.common.json_internal import dumps
 from zato.common.pubsub import all_dict_keys, pubsub_main_data
-from zato.common.util.json_ import dumps
 from zato.server.service import AsIs, Int, List
 from zato.server.service.internal import AdminService, AdminSIO, GetListAdminSIO
 
@@ -159,25 +156,8 @@ class GetList(AdminService):
         output_repeated = True
 
     def get_data(self):
-
-        # Response to produce
-        out = []
-
-        info = self.servers.invoke_all(GetServerList.get_name(), timeout=10)
-        info = bunchify(info)
-        data = info[1]
-
-        for server_name in data:
-            server_info = data[server_name]
-            if server_info.is_ok:
-                server_data = server_info.server_data
-                for pid in server_data:
-                    pid_info = server_data[pid]
-                    if pid_info.is_ok:
-                        pid_response = pid_info.pid_data.response
-                        out.append(pid_response.toDict())
-
-        return out
+        reply = self.server.rpc.invoke_all(GetServerList.get_name(), timeout=10)
+        return reply.data
 
     def handle(self):
         self.response.payload[:] = self.get_data()
@@ -222,7 +202,7 @@ class GetEventList(_GetEventList):
     """ Returns a list of events for a particular topic. Must be invoked on the same server the data is to be returned from.
     """
     def handle(self):
-        server = self.servers[self.request.input.server_name]
+        server = self.server.rpc[self.request.input.server_name]
         response = server.invoke(GetServerEventList.get_name(), self.request.input, pid=self.request.input.server_pid)
         self.response.payload[:] = response
 

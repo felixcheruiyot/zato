@@ -15,7 +15,7 @@ from dictalchemy.utils import asdict
 from six import add_metaclass
 
 # Zato
-from zato.common import CACHE as _COMMON_CACHE
+from zato.common.api import CACHE as _COMMON_CACHE
 from zato.common.broker_message import CACHE
 from zato.common.odb.model import CacheBuiltin
 from zato.common.odb.query import cache_builtin_list
@@ -31,6 +31,8 @@ get_list_docs = 'built-in cache definitions'
 broker_message = CACHE
 broker_message_prefix = 'BUILTIN_'
 list_func = cache_builtin_list
+skip_create_integrity_error = True
+skip_if_exists = True
 output_optional_extra = ['current_size', 'cache_id']
 
 # ################################################################################################################################
@@ -61,8 +63,20 @@ def response_hook(self, input, _ignored, attrs, service_type):
         self.response.payload.cache_id = self.response.payload.id
 
     elif service_type == 'get_list':
+
         for item in self.response.payload:
-            item.current_size = self.cache.get_size(_COMMON_CACHE.TYPE.BUILTIN, item.name)
+
+            # Note that below we are catching a KeyError in get_size.
+            # This is because we know that item.name exists in the database,
+            # otherwise we would not have found it during the iteration,
+            # but it may not exist yet in RAM. This will happen when enmasse
+            # runs with a fresh cluster - the database may be updated but our in-RAM
+            # storage not yet.
+
+            try:
+                item.current_size = self.cache.get_size(_COMMON_CACHE.TYPE.BUILTIN, item.name)
+            except KeyError:
+                item.current_size = 0
 
 # ################################################################################################################################
 

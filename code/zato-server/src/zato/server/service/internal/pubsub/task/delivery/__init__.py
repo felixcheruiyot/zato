@@ -50,7 +50,7 @@ class GetServerDeliveryTaskList(AdminService):
             with ps_tool.lock:
                 for sub_key, task in ps_tool.delivery_tasks.items(): # type: (str, DeliveryTask)
 
-                    last_sync = task.last_iter_run #ps_tool.last_gd_run
+                    last_sync = task.last_iter_run # ps_tool.last_gd_run
                     if last_sync:
                         last_sync = datetime_from_ms(last_sync * 1000)
 
@@ -93,7 +93,7 @@ class GetDeliveryTaskList(AdminService):
 
     def handle(self):
 
-        self.response.payload[:] = self.servers[self.request.input.server_name].invoke(GetServerDeliveryTaskList.get_name(), {
+        self.response.payload[:] = self.server.rpc[self.request.input.server_name].invoke(GetServerDeliveryTaskList.get_name(), {
             'cluster_id': self.request.input.cluster_id,
         }, pid=self.request.input.server_pid)
 
@@ -114,7 +114,7 @@ class GetDeliveryTask(AdminService):
             'server_pid': self.request.input.server_pid,
         }
 
-        response = self.servers[self.request.input.server_name].invoke(GetDeliveryTaskList.get_name(), request)
+        response = self.server.rpc[self.request.input.server_name].invoke(GetDeliveryTaskList.get_name(), request)
 
         for item in response:
             if item['python_id'] == self.request.input.python_id:

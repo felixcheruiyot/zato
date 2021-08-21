@@ -87,10 +87,6 @@ class GetServerDeliveryTaskMessageList(AdminService):
 
                             out.append(item)
 
-                            self.logger.warn('EEE %s', msg.to_dict())
-
-        self.logger.warn('ZZZ %s', out)
-
         return out
 
     def handle(self):
@@ -110,7 +106,7 @@ class GetDeliveryTaskMessageList(AdminService):
 
     def handle(self):
 
-        response = self.servers[self.request.input.server_name].invoke(GetServerDeliveryTaskMessageList.get_name(), {
+        response = self.server.rpc[self.request.input.server_name].invoke(GetServerDeliveryTaskMessageList.get_name(), {
             'cluster_id': self.request.input.cluster_id,
             'python_id': self.request.input.python_id,
         }, pid=self.request.input.server_pid)

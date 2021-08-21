@@ -27,16 +27,17 @@ from sqlalchemy.exc import IntegrityError
 from past.builtins import basestring, unicode
 
 # Zato
-from zato.common import RATE_LIMIT, SEC_DEF_TYPE, TOTP
+from zato.common.api import RATE_LIMIT, SEC_DEF_TYPE, TOTP
 from zato.common.audit import audit_pii
-from zato.common.crypto import CryptoManager
+from zato.common.crypto.api import CryptoManager
+from zato.common.crypto.totp_ import TOTPManager
 from zato.common.exception import BadRequest
+from zato.common.json_internal import dumps
 from zato.common.odb.model import SSOLinkedAuth as LinkedAuth, SSOSession as SessionModel, SSOUser as UserModel
-from zato.common.util.json_ import dumps
 from zato.sso import const, not_given, status_code, User as UserEntity, ValidationError
 from zato.sso.attr import AttrAPI
 from zato.sso.odb.query import get_linked_auth_list, get_sign_up_status_by_token, get_user_by_id, get_user_by_linked_sec, \
-     get_user_by_username, get_user_by_ust
+     get_user_by_name, get_user_by_ust
 from zato.sso.session import LoginCtx, SessionAPI
 from zato.sso.user_search import SSOSearch
 from zato.sso.util import check_credentials, check_remote_app_exists, make_data_secret, make_password_secret, new_confirm_token, \
@@ -92,7 +93,6 @@ UserModelTableUpdate = UserModelTable.update
 
 # Attributes accessible to both account owner and super-users
 regular_attrs = {
-    'user_id': None,
     'username': None,
     'email': b'',
     'display_name': '',
@@ -105,7 +105,9 @@ regular_attrs = {
 
 # Attributes accessible only to super-users
 super_user_attrs = {
+    'user_id': None,
     'is_active': False,
+    'is_approval_needed': None,
     'is_internal': False,
     'is_super_user': False,
     'is_locked': True,
@@ -370,6 +372,8 @@ class UserAPI(object):
         # .. while emails are only encrypted, and it is optional.
         if self.encrypt_email:
             email = self._get_encrypted_email(ctx.data.get('email'))
+        else:
+            email = None
 
         user_model.username = ctx.data['username']
         user_model.email = email
@@ -380,7 +384,7 @@ class UserAPI(object):
         user_model.password_must_change = ctx.data.get('password_must_change') or False
         user_model.password_expiry = now + timedelta(days=self.password_expiry)
 
-        totp_key = ctx.data.get('totp_key') or CryptoManager.generate_totp_key()
+        totp_key = ctx.data.get('totp_key') or TOTPManager.generate_totp_key()
         totp_label = ctx.data.get('totp_label') or TOTP.default_label
 
         user_model.is_totp_enabled = ctx.data.get('is_totp_enabled')
@@ -452,7 +456,7 @@ class UserAPI(object):
                 raise ValidationError(status_code.username.invalid, True)
 
             # Make sure the username is unique
-            if get_user_by_username(session, ctx.data['username'], needs_approved=False):
+            if get_user_by_name(session, ctx.data['username'], needs_approved=False):
                 logger.warn('Username `%s` already exists', ctx.data['username'])
                 raise ValidationError(status_code.username.exists, False)
 
@@ -604,7 +608,7 @@ class UserAPI(object):
         audit_pii.info(cid, 'user.get_user_by_username', extra={'username':username})
 
         with closing(self.odb_session_func()) as session:
-            return get_user_by_username(session, username, needs_approved=needs_approved)
+            return get_user_by_name(session, username, needs_approved=needs_approved)
 
 # ################################################################################################################################
 
@@ -633,7 +637,7 @@ class UserAPI(object):
             else:
                 info = func(session, query_criteria, _utcnow())
 
-            # Input UST is invalid for any reason (perhaps has just expired), raise an exception in that case
+            # Input UST is invalid for any reason (perhaps it has just expired), raise an exception in that case
             if not info:
                 raise ValidationError(status_code.auth.not_allowed, True)
 
@@ -642,6 +646,7 @@ class UserAPI(object):
 
                 # Main user entity
                 out = UserEntity()
+                out.is_current_super_user = current_session.is_super_user
 
                 if current_session.is_super_user:
                     attrs = _all_super_user_attrs
@@ -650,13 +655,20 @@ class UserAPI(object):
                     attrs = regular_attrs
 
                 for key in attrs:
-                    value = getattr(info, key)
+
+                    value = getattr(info, key, None)
 
                     if isinstance(value, datetime):
                         value = value.isoformat()
 
+                    # This will be encrypted ..
                     elif key in ('totp_key', 'totp_label'):
                         value = self.decrypt_func(value)
+
+                        # .. do not return our internal constant  if not label has been assign to TOTP.
+                        if key == 'totp_label':
+                            if value == TOTP.default_label:
+                                value = ''
 
                     setattr(out, key, value)
 
@@ -705,7 +717,7 @@ class UserAPI(object):
             extra={'current_app':current_app, 'remote_addr':remote_addr, 'sec_type': sec_type})
 
         return self._get_user(
-            cid, get_user_by_linked_sec, (sec_type, sec_username) , current_ust, current_app, remote_addr, False, True)
+            cid, get_user_by_linked_sec, (sec_type, sec_username), current_ust, current_app, remote_addr, False, True)
 
 # ################################################################################################################################
 
@@ -737,7 +749,7 @@ class UserAPI(object):
 
             # .. or use username if this is what was given on input.
             elif username:
-                user = get_user_by_username(session, username, needs_approved=False)
+                user = get_user_by_name(session, username, needs_approved=False)
                 where = UserModelTable.c.username==username
 
             user_id = user.user_id
@@ -796,32 +808,57 @@ class UserAPI(object):
 
 # ################################################################################################################################
 
-    def _lock_user_cli(self, user_id, is_locked):
-        """ Locks or unlocks a user account. Used by CLI, does not check any permissions.
+    def lock_user(self, cid, user_id, current_ust=None, current_app=None, remote_addr=None, require_super_user=True,
+        current_user=None):
+        """ Locks an existing user. It is acceptable to lock an already lock user.
         """
+        # type: (str, str, str, str, str, bool, str)
+
+        # PII audit comes first
+        audit_pii.info(cid, 'user.lock_user', extra={'current_app':current_app, 'remote_addr':remote_addr})
+
+        return self._lock_user(user_id, True, cid, current_ust, current_app, remote_addr, require_super_user, current_user)
+
+# ################################################################################################################################
+
+    def unlock_user(self, cid, user_id, current_ust=None, current_app=None, remote_addr=None, require_super_user=True,
+        current_user=None):
+        """ Unlocks an existing user. It is acceptable to unlock a user that is not locked.
+        """
+        # type: (str, str, str, str, str, bool, str)
+
+        # PII audit comes first
+        audit_pii.info(cid, 'user.lock_user', extra={'current_app':current_app, 'remote_addr':remote_addr})
+
+        return self._lock_user(user_id, False, cid, current_ust, current_app, remote_addr, require_super_user, current_user)
+
+# ################################################################################################################################
+
+    def _lock_user(self, user_id, is_locked, cid=None, current_ust=None, current_app=None, remote_addr=None,
+        require_super_user=True, current_user=None):
+        """ An internal method to lock or unlock users.
+        """
+        # type: (str, bool, str, str, str, str, bool, str)
+        if require_super_user:
+            current_session = self._require_super_user(cid, current_ust, current_app, remote_addr)
+            current_user = current_session.user_id
+        else:
+            current_user = current_user if current_user else 'auto'
+
+        # We have all that is needed to so we can actually issue the SQL call.
+        # Note that we always populate locked_time and locked_by even if is_locked is False
+        # to keep track of both who locked and unlocked the user.
         with closing(self.odb_session_func()) as session:
             session.execute(
-                update(UserModelTable).\
+                sql_update(UserModelTable).\
                 values({
                     'is_locked': is_locked,
+                    'locked_time': datetime.utcnow(),
+                    'locked_by': current_user,
                     }).\
                 where(UserModelTable.c.user_id==user_id)
             )
             session.commit()
-
-# ################################################################################################################################
-
-    def lock_user_cli(self, user_id):
-        """ Locks a user account. Does not check any permissions.
-        """
-        self._lock_user(user_id, True)
-
-# ################################################################################################################################
-
-    def unlock_user_cli(self, user_id):
-        """ Unlocks a user account. Does not check any permissions.
-        """
-        self._lock_user(user_id, False)
 
 # ################################################################################################################################
 
@@ -845,7 +882,7 @@ class UserAPI(object):
           'new_password': new_password,
           'totp_code': totp_code,
         }
-        login_ctx = LoginCtx(remote_addr, user_agent, has_remote_addr, has_user_agent, ctx_input)
+        login_ctx = LoginCtx(remote_addr, user_agent, ctx_input)
         return self.session.login(login_ctx, is_logged_in_ext=False, skip_sec=skip_sec)
 
 # ################################################################################################################################
@@ -1022,12 +1059,16 @@ class UserAPI(object):
 
 # ################################################################################################################################
 
-    def set_password(self, cid, user_id, password, must_change, password_expiry, current_app, remote_addr):
+    def set_password(self, cid, user_id, password, must_change, password_expiry, current_app, remote_addr, details=None):
         """ Sets a new password for user.
         """
         # PII audit comes first
-        audit_pii.info(cid, 'user.set_password', target_user=user_id,
-            extra={'current_app':current_app, 'remote_addr':remote_addr})
+        extra = {'current_app':current_app, 'remote_addr':remote_addr}
+
+        if details:
+            extra.update(details)
+
+        audit_pii.info(cid, 'user.set_password', target_user=user_id, extra=extra)
 
         set_password(self.odb_session_func, self.encrypt_func, self.hash_func, self.sso_conf, user_id, password,
             must_change, password_expiry)
@@ -1107,7 +1148,7 @@ class UserAPI(object):
 
 # ################################################################################################################################
 
-    def change_password(self, cid, data, current_ust, current_app, remote_addr, _no_user_id='no-user-id'.format(uuid4().hex)):
+    def change_password(self, cid, data, current_ust, current_app, remote_addr, _no_user_id='no-user-id.{}'.format(uuid4().hex)):
         """ Changes a user's password. Super-admins may also set its expiration
         and whether the user must set it to a new one on next login.
         """
@@ -1373,7 +1414,7 @@ class UserAPI(object):
             # .. delete any sessions possibly existing for this link ..
             session.execute(SessionModelTableDelete().\
                 where(sql_and(
-                    SessionModelTable.c.ext_session_id=='{}.{}'.format(auth_type, auth_id),
+                    SessionModelTable.c.ext_session_id.startswith('{}.{}'.format(auth_type, auth_id)),
                 ))
             )
 
@@ -1394,7 +1435,10 @@ class UserAPI(object):
 
 # ################################################################################################################################
 
-    def on_broker_msg_SSO_LINK_AUTH_DELETE(self, auth_type, auth_id, user_id):
+    def on_broker_msg_SSO_LINK_AUTH_DELETE(self, auth_type, auth_id):
+
+        auth_type = 'zato.{}'.format(auth_type)
+
         with self.lock:
             auth_id_link_map = self.auth_id_link_map[auth_type]
             try:
@@ -1523,7 +1567,7 @@ class UserAPI(object):
 
                 # Write out all super-user accessible attributes for each output row
                 for name in sorted(_all_super_user_attrs):
-                    value = sql_item[name]
+                    value = sql_item.get(name)
 
                     # Serialize datetime objects to string, if needed
                     if serialize_dt and isinstance(value, datetime):
