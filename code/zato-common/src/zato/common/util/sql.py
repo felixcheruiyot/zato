@@ -46,7 +46,7 @@ _DeadlockException = (SAInternalError, SAOperationalError)
 # but the underlying PyMySQL library returns only a string rather than an integer code.
 _deadlock_code = 'Deadlock found when trying to get lock'
 
-_zato_opaque_skip_attrs=set(['needs_details', 'paginate', 'cur_page', 'query'])
+_zato_opaque_skip_attrs = {'needs_details', 'paginate', 'cur_page', 'query'}
 
 # ################################################################################################################################
 
@@ -116,15 +116,15 @@ def sql_op_with_deadlock_retry(cid, name, func, *args, **kwargs):
         except _DeadlockException as e:
 
             if has_debug:
-                logger_zato.warn('Caught _DeadlockException `%s` `%s`', cid, e)
+                logger_zato.warning('Caught _DeadlockException `%s` `%s`', cid, e)
 
             if _deadlock_code not in e.args[0]:
                 raise
             else:
                 if attempts % 50 == 0:
                     msg = 'Still in deadlock for `{}` after %d attempts cid:%s args:%s'.format(name)
-                    logger_zato.warn(msg, attempts, cid, args)
-                    logger_pubsub.warn(msg, attempts, cid, args)
+                    logger_zato.warning(msg, attempts, cid, args)
+                    logger_pubsub.warning(msg, attempts, cid, args)
 
                 # Sleep for a while until the next attempt
                 sleep(0.005)
@@ -135,7 +135,7 @@ def sql_op_with_deadlock_retry(cid, name, func, *args, **kwargs):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class ElemsWithOpaqueMaker(object):
+class ElemsWithOpaqueMaker:
     def __init__(self, elems):
         self.elems = elems
 
@@ -242,8 +242,8 @@ def set_instance_opaque_attrs(instance, input, skip=None, only=None, _zato_skip=
     input_attrs = set(input)
 
     if only:
-        input_attrs = set([elem for elem in input_attrs if elem in only])
-        instance_attrs = set([elem for elem in instance_attrs if elem not in only])
+        input_attrs = {elem for elem in input_attrs if elem in only}
+        instance_attrs = {elem for elem in instance_attrs if elem not in only}
 
     # Any extra input attributes will be treated as opaque ones
     input_opaque_attrs = input_attrs - instance_attrs
@@ -261,7 +261,12 @@ def set_instance_opaque_attrs(instance, input, skip=None, only=None, _zato_skip=
             instance_opaque_attrs = {}
 
         for name in input_opaque_attrs:
-            instance_opaque_attrs[name] = input[name]
+            value = input[name]
+
+            if isinstance(value, bytes):
+                value = value.decode('utf8')
+
+            instance_opaque_attrs[name] = value
 
     # Set generic attributes for instance
     if instance_opaque_attrs is not None:

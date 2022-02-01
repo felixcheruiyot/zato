@@ -110,6 +110,9 @@ class Validate(Service):
     def _validate_password(self, session, sso_conf, password):
         """ Raises ValidationError if password is invalid, e.g. it is too simple.
         """
+        # This may be encrypted while we need to validate its clear-text form
+        password = self.server.decrypt(password)
+
         # Password may not be too short
         if len(password) < sso_conf.password.min_length:
             raise ValidationError(status_code.password.too_short, sso_conf.password.inform_if_invalid)
@@ -168,7 +171,7 @@ class Validate(Service):
                     self._validate_email(session, sso_conf, email)
 
             except ValidationError as e:
-                self.logger.warn('Could not validate user `%s`, sub_status `%s`', input.username, e.sub_status)
+                self.logger.warning('Could not validate user `%s`, sub_status `%s`', input.username, e.sub_status)
                 self.response.payload.is_valid = False
                 if e.return_status:
                     self.response.payload.sub_status = e.sub_status

@@ -31,7 +31,7 @@ def to_json(model, return_as_dict=False):
     """
     out = {}
     out['fields'] = {}
-    out['pk'] = getattr(model, 'id')
+    out['pk'] = getattr(model, 'id', None)
 
     for col in model._sa_class_manager.mapper.mapped_table.columns:
         out['fields'][col.name] = getattr(model, col.name)
@@ -759,6 +759,9 @@ class Service(Base):
         self.docs_description = None # Not used by the database
         self.invokes = None # Not used by the database
         self.invoked_by = None # Not used by the database
+
+        self.last_timestamp = None # Not used by the database
+        self.last_timestamp_utc = None # Not used by the database
 
 # ################################################################################################################################
 

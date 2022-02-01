@@ -58,7 +58,7 @@ time_keys = 'creation_time', 'last_synced', 'gd_pub_time_max'
 
 # ################################################################################################################################
 
-class PubSubTool(object):
+class PubSubTool:
     def __init__(self):
         self.server_name = None
         self.server_pid = None
@@ -73,8 +73,6 @@ class PubSubTool(object):
         self.ws_channel_id_to_endpoint_id = None
         self.service_id_to_endpoint_id = None
         self.topic_name_to_id = None
-        self.pub_buffer_gd = None
-        self.pub_buffer_non_gd = None
         self.pubsub_tool_by_sub_key = None
         self.pubsub_tools = None
         self.sync_backlog = None
@@ -97,7 +95,7 @@ class PubSubTool(object):
 
 # ################################################################################################################################
 
-class _SubscriptionDictKeys(object):
+class _SubscriptionDictKeys:
     def __init__(self):
         self.key = None
         self.key_len = None
@@ -105,12 +103,12 @@ class _SubscriptionDictKeys(object):
 
 # ################################################################################################################################
 
-class _DictValuesData(object):
+class _DictValuesData:
     pass
 
 # ################################################################################################################################
 
-class _Event(object):
+class _Event:
     pass
 
 # ################################################################################################################################

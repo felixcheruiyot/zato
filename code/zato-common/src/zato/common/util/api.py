@@ -10,7 +10,7 @@ Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 import copy
 import errno
 import gc
-import imp
+import importlib.util
 import inspect
 import linecache
 import logging
@@ -34,11 +34,9 @@ from inspect import isfunction, ismethod
 from itertools import tee
 from io import StringIO
 from operator import itemgetter
-from os import getuid
 from os.path import abspath, isabs, join
 from pathlib import Path
 from pprint import pprint as _pprint, PrettyPrinter
-from pwd import getpwuid
 from string import Template
 from subprocess import Popen, PIPE
 from tempfile import NamedTemporaryFile
@@ -117,6 +115,7 @@ from zato.hl7.parser import get_payload_from_request as hl7_get_payload_from_req
 if 0:
     from typing import Iterable as iterable
     from simdjson import Parser as SIMDJSONParser
+    from zato.common.typing_ import any_, callable_
 
     iterable = iterable
     SIMDJSONParser = SIMDJSONParser
@@ -128,7 +127,7 @@ random.seed()
 # ################################################################################################################################
 
 logger = logging.getLogger(__name__)
-logging.addLevelName(TRACE1, "TRACE1")
+logging.addLevelName(TRACE1, 'TRACE1')
 
 _repr_template = Template('<$class_name at $mem_loc$attrs>')
 _uncamelify_re = re.compile(r'((?<=[a-z])[A-Z]|(?<!\A)[A-Z](?=[a-z]))')
@@ -170,7 +169,7 @@ wait_until_port_taken = wait_until_port_taken
 _hostname = socket.gethostname()
 _fqdn = socket.getfqdn()
 _current_host = '{}/{}'.format(_hostname, _fqdn)
-_current_user = getpwuid(getuid()).pw_name
+_current_user = getpass_getuser()
 
 # ################################################################################################################################
 
@@ -224,7 +223,7 @@ def pprint(obj):
     """ Pretty-print an object into a string buffer.
     """
     # Get dicts' items.
-    if hasattr(obj, "items"):
+    if hasattr(obj, 'items'):
         obj = sorted(obj.items())
 
     buf = StringIO()
@@ -248,7 +247,7 @@ def object_attrs(_object, ignore_double_underscore, to_avoid_list, sort):
     attrs = dir(_object)
 
     if ignore_double_underscore:
-        attrs = ifilter(lambda elem: not elem.startswith("__"), attrs)
+        attrs = ifilter(lambda elem: not elem.startswith('__'), attrs)
 
     _to_avoid_list = getattr(_object, to_avoid_list, None) # Don't swallow exceptions
     if _to_avoid_list is not None:
@@ -286,7 +285,7 @@ def to_form(_object):
     a true Django model.
     """
     out = {}
-    attrs = object_attrs(_object, True, "repr_to_avoid", False)
+    attrs = object_attrs(_object, True, 'repr_to_avoid', False)
     for attr in attrs:
         out[attr] = getattr(_object, attr)
 
@@ -326,12 +325,11 @@ def tech_account_password(password_clear, salt):
 
 # ################################################################################################################################
 
-def new_cid(bytes=12, _random=random.getrandbits):
-    """ Returns a new 96-bit correlation identifier. It is *not* safe to use the ID
+def new_cid(bytes:'int'=12, _random:'callable_'=random.getrandbits) -> 'str':
+    """ Returns a new 96-bit correlation identifier. It is not safe to use the ID
     for any cryptographical purposes; it is only meant to be used as a conveniently
     formatted ticket attached to each of the requests processed by Zato servers.
     """
-
     # Note that we need to convert bytes to bits here.
     return hex(_random(bytes * 8))[2:]
 
@@ -355,7 +353,7 @@ def _get_config(conf, bunchified, needs_user_config, repo_location=None):
             for name, path in user_config.items():
                 path = absolutize(path, repo_location)
                 if not os.path.exists(path):
-                    logger.warn('User config not found `%s`, name:`%s`', path, name)
+                    logger.warning('User config not found `%s`, name:`%s`', path, name)
                 else:
                     user_conf = ConfigObj(path)
                     user_conf = bunchify(user_conf) if bunchified else user_conf
@@ -369,8 +367,6 @@ def get_config(repo_location, config_name, bunchified=True, needs_user_config=Tr
     raise_on_error=False, log_exception=True):
     """ Returns the configuration object. Will load additional user-defined config files, if any are available.
     """
-    # type: (str, str, bool, bool, object, object) -> Bunch
-
     # Default output to produce
     result = Bunch()
 
@@ -380,7 +376,7 @@ def get_config(repo_location, config_name, bunchified=True, needs_user_config=Tr
         result = _get_config(conf, bunchified, needs_user_config, repo_location)
     except Exception:
         if log_exception:
-            logger.warn('Error while reading %s from %s; e:`%s`', config_name, repo_location, format_exc())
+            logger.warning('Error while reading %s from %s; e:`%s`', config_name, repo_location, format_exc())
         if raise_on_error:
             raise
         else:
@@ -393,7 +389,6 @@ def get_config(repo_location, config_name, bunchified=True, needs_user_config=Tr
 def get_config_from_string(data):
     """ A simplified version of get_config which creates a config object from string, skipping any user-defined config files.
     """
-    # type: (str) -> Bunch
     buff = StringIO()
     buff.write(data)
     buff.seek(0)
@@ -432,7 +427,7 @@ def service_name_from_impl(impl_name):
 
 # ################################################################################################################################
 
-def deployment_info(method, object_, timestamp, fs_location, remote_host='', remote_user=''):
+def deployment_info(method, object_, timestamp, fs_location, remote_host='', remote_user='', should_deploy_in_place=False):
     """ Returns a JSON document containing information who deployed a service
     onto a server, where from and when it was.
     """
@@ -445,6 +440,7 @@ def deployment_info(method, object_, timestamp, fs_location, remote_host='', rem
         'remote_user': remote_user,
         'current_host': current_host(),
         'current_user': get_current_user(),
+        'should_deploy_in_place': should_deploy_in_place
     }
 
 # ################################################################################################################################
@@ -466,8 +462,6 @@ def get_body_payload(body):
 def payload_from_request(json_parser, cid, request, data_format, transport, channel_item=None):
     """ Converts a raw request to a payload suitable for usage with SimpleIO.
     """
-    # type: (SIMDJSONParser, str, object, str, str, object)
-
     if request is not None:
 
         #
@@ -488,11 +482,14 @@ def payload_from_request(json_parser, cid, request, data_format, transport, chan
             if isinstance(request, basestring) and data_format == _data_format_json:
                 try:
                     request_bytes = request if isinstance(request, bytes) else request.encode('utf8')
-                    payload = json_parser.parse(request_bytes)
+                    try:
+                        payload = json_parser.parse(request_bytes)
+                    except ValueError:
+                        payload = request_bytes
                     if hasattr(payload, 'as_dict'):
                         payload = payload.as_dict()
                 except ValueError:
-                    logger.warn('Could not parse request as JSON:`%s`, (%s), e:`%s`', request, type(request), format_exc())
+                    logger.warning('Could not parse request as JSON:`%s`, (%s), e:`%s`', request, type(request), format_exc())
                     raise
             else:
                 payload = request
@@ -576,7 +573,7 @@ def is_python_file(name):
 
 # ################################################################################################################################
 
-class _DummyLink(object):
+class _DummyLink:
     """ A dummy class for staying consistent with pip's API in certain places
     below.
     """
@@ -585,7 +582,7 @@ class _DummyLink(object):
 
 # ################################################################################################################################
 
-class ModuleInfo(object):
+class ModuleInfo:
     def __init__(self, file_name, module):
         self.file_name = file_name
         self.module = module
@@ -598,18 +595,23 @@ def import_module_from_path(file_name, base_dir=None):
         file_name = os.path.normpath(os.path.join(base_dir, file_name))
 
     if not os.path.exists(file_name):
-        raise ValueError("Module could not be imported, path:`{}` doesn't exist".format(file_name))
+        raise ValueError('Module could not be imported, path:`{}` does not exist'.format(file_name))
 
     _, mod_file = os.path.split(file_name)
     mod_name, _ = os.path.splitext(mod_file)
 
-    # Delete compiled bytecode if it exists so that imp.load_source actually picks up the source module
+    # Delete compiled bytecode if it exists so that importlib actually picks up the source module
     for suffix in('c', 'o'):
         path = file_name + suffix
         if os.path.exists(path):
             os.remove(path)
 
-    return ModuleInfo(file_name, imp.load_source(mod_name, file_name))
+    spec = importlib.util.spec_from_file_location(mod_name, file_name)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+
+    return ModuleInfo(file_name, mod)
 
 # ################################################################################################################################
 
@@ -628,12 +630,12 @@ def _os_remove(path):
 
 # ################################################################################################################################
 
-def hot_deploy(parallel_server, file_name, path, delete_path=True, notify=True):
+def hot_deploy(parallel_server, file_name, path, delete_path=True, notify=True, should_deploy_in_place=False):
     """ Hot-deploys a package if it looks like a Python module or archive.
     """
     logger.debug('About to hot-deploy `%s`', path)
     now = datetime.utcnow()
-    di = dumps(deployment_info('hot-deploy', file_name, now.isoformat(), path))
+    di = dumps(deployment_info('hot-deploy', file_name, now.isoformat(), path, should_deploy_in_place=should_deploy_in_place))
 
     # Insert the package into the DB ..
     package_id = parallel_server.odb.hot_deploy(
@@ -670,8 +672,9 @@ def multikeysort(items, columns):
 # ################################################################################################################################
 
 # From http://docs.python.org/release/2.7/library/itertools.html#recipes
-def grouper(n, iterable, fillvalue=None):
-    "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
+def grouper(n, iterable, fillvalue=None) -> 'any_':
+    """ grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx
+    """
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
 
@@ -689,7 +692,8 @@ def dict_item_name(system, key, value):
 
 # From http://docs.python.org/release/2.7/library/itertools.html#recipes
 def pairwise(iterable):
-    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+    """ s -> (s0,s1), (s1,s2), (s2, s3), ...
+    """
     a, b = tee(iterable)
     next(b, None)
     return izip(a, b)
@@ -781,6 +785,28 @@ def dotted_getattr(o, path):
 
 # ################################################################################################################################
 
+def wait_for_odb_service(session, cluster_id, service_name):
+    # Assume we do not have it
+    service = None
+
+    while not service:
+
+        # Try to look it up ..
+        service = session.query(Service).\
+            filter(Service.name==service_name).\
+            filter(Cluster.id==cluster_id).\
+            first()
+
+        # .. if not found, sleep for a moment.
+        if not service:
+            sleep(1)
+            logger.info('Waiting for ODB service `%s`', service_name)
+
+    # If we are here, it means that the service was found so we can return it
+    return service
+
+# ################################################################################################################################
+
 def add_startup_jobs(cluster_id, odb, jobs, stats_enabled):
     """ Adds internal jobs to the ODB. Note that it isn't being added
     directly to the scheduler because we want users to be able to fine-tune the job's
@@ -790,7 +816,7 @@ def add_startup_jobs(cluster_id, odb, jobs, stats_enabled):
         now = datetime.utcnow()
         for item in jobs:
 
-            if not stats_enabled and item['name'].startswith('zato.stats'):
+            if item['name'].startswith('zato.stats'):
                 continue
 
             try:
@@ -807,10 +833,12 @@ def add_startup_jobs(cluster_id, odb, jobs, stats_enabled):
                     if not isinstance(extra, bytes):
                         extra = extra.encode('utf8')
 
-                service = session.query(Service).\
-                    filter(Service.name==item['service']).\
-                    filter(Cluster.id==cluster_id).\
-                    one()
+                #
+                # This will block as long as this service is not available in the ODB.
+                # It is required to do it because the scheduler may start before servers
+                # in which case services will not be in the ODB yet and we need to wait for them.
+                #
+                service = wait_for_odb_service(session, cluster_id, item['service'])
 
                 cluster = session.query(Cluster).\
                     filter(Cluster.id==cluster_id).\
@@ -838,7 +866,7 @@ def add_startup_jobs(cluster_id, odb, jobs, stats_enabled):
                 session.commit()
 
             except Exception:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
 
             else:
                 logger.info('Initial job added `%s`', job.name)
@@ -861,7 +889,7 @@ def validate_input_dict(cid, *validation_info):
             msg = 'Invalid {}:[{}]'.format(key_name, key)
             log_msg = '{} (attrs: {})'.format(msg, source.attrs)
 
-            logger.warn(log_msg)
+            logger.warning(log_msg)
             raise ZatoException(cid, msg)
 
 # ################################################################################################################################
@@ -869,7 +897,7 @@ def validate_input_dict(cid, *validation_info):
 # Code below taken from tripod https://github.com/shayne/tripod/blob/master/tripod/sampler.py and slightly modified
 # under the terms of LGPL (see LICENSE.txt file for details).
 
-class SafePrettyPrinter(PrettyPrinter, object):
+class SafePrettyPrinter(PrettyPrinter):
     def format(self, obj, context, maxlevels, level):
         try:
             return super(SafePrettyPrinter, self).format(
@@ -923,7 +951,7 @@ def get_stack(f, with_locals=False):
             try:
                 reprs = spformat(localvars)
             except Exception:
-                reprs = "failed to format local variables"
+                reprs = 'failed to format local variables'
             out += [' ' + line for line in reprs.splitlines()]
             out.append('')
     return '\n'.join(out)
@@ -932,7 +960,7 @@ def get_stack(f, with_locals=False):
 
 def get_threads_traceback(pid):
     result = {}
-    id_name = dict([(th.ident, th.name) for th in threading.enumerate()])
+    id_name = {th.ident: th.name for th in threading.enumerate()}
 
     for thread_id, frame in iteritems(sys._current_frames()):
         key = '{}:{}'.format(pid, id_name.get(thread_id, '(No name)'))
@@ -1059,11 +1087,13 @@ def validate_xpath(expr):
 # ################################################################################################################################
 
 def get_haproxy_agent_pidfile(component_dir):
-    json_config = loads(open(os.path.join(component_dir, 'config', 'repo', 'lb-agent.conf')).read())
+    json_config = loads(
+        open(os.path.join(component_dir, 'config', 'repo', 'lb-agent.conf'), encoding='utf8').read()
+        )
     return os.path.abspath(os.path.join(component_dir, json_config['pid_file']))
 
 def store_pidfile(component_dir, pidfile=MISC.PIDFILE):
-    open(os.path.join(component_dir, pidfile), 'w').write('{}'.format(os.getpid()))
+    open(os.path.join(component_dir, pidfile), 'w', encoding='utf8').write('{}'.format(os.getpid()))
 
 # ################################################################################################################################
 
@@ -1081,7 +1111,7 @@ def validate_tls_from_payload(payload, is_key=False):
         tf.write(payload)
         tf.flush()
 
-        pem = open(tf.name).read()
+        pem = open(tf.name, encoding='utf8').read()
 
         cert_info = crypto.load_certificate(crypto.FILETYPE_PEM, pem)
         cert_info = sorted(cert_info.get_subject().get_components())
@@ -1119,7 +1149,7 @@ def store_tls(root_dir, payload, is_key=False):
     info = get_tls_from_payload(payload, is_key)
 
     pem_file_path = get_tls_full_path(root_dir, TLS.DIR_KEYS_CERTS if is_key else TLS.DIR_CA_CERTS, info)
-    pem_file = open(pem_file_path, 'w')
+    pem_file = open(pem_file_path, 'w', encoding='utf8')
 
     try:
         portalocker.lock(pem_file, portalocker.LOCK_EX)
@@ -1191,7 +1221,7 @@ class StaticConfig(Bunch):
 
     def read_file(self, full_path, file_name):
         # type: (str, str) -> None
-        f = open(full_path)
+        f = open(full_path, encoding='utf8')
         file_contents = f.read()
         f.close()
 
@@ -1237,7 +1267,7 @@ class StaticConfig(Bunch):
                 if elem.is_file():
                     self.read_file(full_path, elem.name)
             except Exception as e:
-                logger.warn('Could not read file `%s`, e:`%s`', full_path, e.args)
+                logger.warning('Could not read file `%s`, e:`%s`', full_path, e.args)
 
 # ################################################################################################################################
 
@@ -1246,12 +1276,14 @@ def add_scheduler_jobs(api, odb, cluster_id, spawn=True):
         _, weeks, days, hours, minutes, seconds, repeats, cron_definition)\
             in odb.get_job_list(cluster_id):
 
-        job_data = Bunch({'id':id, 'name':name, 'is_active':is_active,
+        job_data = Bunch({
+            'id':id, 'name':name, 'is_active':is_active,
             'job_type':job_type, 'start_date':start_date,
             'extra':extra, 'service':service_name, 'weeks':weeks,
             'days':days, 'hours':hours, 'minutes':minutes,
             'seconds':seconds, 'repeats':repeats,
-            'cron_definition':cron_definition})
+            'cron_definition':cron_definition
+        })
 
         if is_active:
             api.create_edit('create', job_data, spawn=spawn)
@@ -1403,7 +1435,9 @@ def get_server_client_auth(config, repo_dir, cm, odb_password_encrypted):
 
             if security:
                 password = security.password.replace(SECRETS.PREFIX, '')
-                return (security.username, cm.decrypt(password))
+                if password.startswith(SECRETS.EncryptedMarker):
+                    password = cm.decrypt(password)
+                return (security.username, password)
 
 # ################################################################################################################################
 
@@ -1463,9 +1497,11 @@ def get_engine_url(args):
     else:
         is_sqlite = args.get('engine') == 'sqlite' or args.get('db_type') == 'sqlite'
 
-    names = ('engine', 'username', 'password', 'host', 'port', 'name', 'db_name', 'db_type', 'sqlite_path', 'odb_type',
-             'odb_user', 'odb_password', 'odb_host', 'odb_port', 'odb_db_name', 'odb_type', 'ENGINE', 'NAME', 'HOST', 'USER',
-             'PASSWORD', 'PORT')
+    names = (
+        'engine', 'username', 'password', 'host', 'port', 'name', 'db_name', 'db_type', 'sqlite_path', 'odb_type',
+        'odb_user', 'odb_password', 'odb_host', 'odb_port', 'odb_db_name', 'odb_type', 'ENGINE', 'NAME', 'HOST', 'USER',
+        'PASSWORD', 'PORT'
+    )
 
     for name in names:
         if has_get:
@@ -1514,9 +1550,9 @@ def startup_service_payload_from_path(name, value, repo_location):
         path = orig_path
 
     try:
-        payload = open(path).read()
+        payload = open(path, encoding='utf8').read()
     except Exception:
-        logger.warn(
+        logger.warning(
             'Could not open payload path:`%s` `%s`, skipping startup service:`%s`, e:`%s`', orig_path, path, name, format_exc())
     else:
         return payload
@@ -1598,7 +1634,7 @@ def timeouting_popen(command, timeout, timeout_msg, rc_non_zero_msg, common_msg=
 # ################################################################################################################################
 
 def spawn_greenlet(callable, *args, **kwargs):
-    """ Spawns a new greenlet and wait up to timeout seconds for its response. It is expected that the response never arrives
+    """ Spawns a new greenlet and waits up to timeout seconds for its response. It is expected that the response never arrives
     because if it does, it means that there were some errors.
     """
     try:
@@ -1679,7 +1715,7 @@ def get_response_value(response):
 # ################################################################################################################################
 
 def get_lb_agent_json_config(repo_dir):
-    return loads(open(os.path.join(repo_dir, 'lb-agent.conf')).read())
+    return loads(open(os.path.join(repo_dir, 'lb-agent.conf'), encoding='utf8').read())
 
 # ################################################################################################################################
 

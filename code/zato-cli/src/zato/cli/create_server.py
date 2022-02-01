@@ -10,9 +10,12 @@ Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 from copy import deepcopy
 
 # Zato
-from zato.cli import common_logging_conf_contents, common_odb_opts, kvdb_opts, sql_conf_contents, ZatoCommand
-from zato.common.api import CONTENT_TYPE, default_internal_modules, SSO as CommonSSO
+from zato.cli import common_odb_opts, kvdb_opts, sql_conf_contents, ZatoCommand
+from zato.common.api import CONTENT_TYPE, default_internal_modules, SCHEDULER, SSO as CommonSSO
 from zato.common.simpleio_ import simple_io_conf_contents
+from zato.common.util import as_bool
+from zato.common.util.open_ import open_r, open_w
+from zato.common.events.common import Default as EventsDefault
 
 # ################################################################################################################################
 
@@ -37,12 +40,17 @@ server_conf_template = """[main]
 gunicorn_bind=0.0.0.0:{{port}}
 gunicorn_worker_class=gevent
 gunicorn_workers={{gunicorn_workers}}
-gunicorn_timeout=240
+gunicorn_timeout=1234567890
 gunicorn_user=
 gunicorn_group=
 gunicorn_proc_name=
 gunicorn_logger_class=
 gunicorn_graceful_timeout=1
+debugger_enabled=False
+debugger_host=0.0.0.0
+debugger_port=5678
+
+work_dir=../../work
 
 deployment_lock_expires=1073741824 # 2 ** 30 seconds = +/- 34 years
 deployment_lock_timeout=180
@@ -71,9 +79,13 @@ pool_size={{odb_pool_size}}
 username={{odb_user}}
 use_async_driver=True
 
+[scheduler]
+scheduler_host={{scheduler_host}}
+scheduler_port={{scheduler_port}}
+scheduler_use_tls=False
+
 [hot_deploy]
 pickup_dir=../../pickup/incoming/services
-work_dir=../../work
 backup_history=100
 backup_format=bztar
 delete_after_pick_up=False
@@ -123,6 +135,11 @@ return_json_schema_errors=False
 sftp_genkey_command=dropbearkey
 posix_ipc_skip_platform=darwin
 service_invoker_allow_internal=
+
+[events]
+fs_data_path = {{events_fs_data_path}}
+sync_threshold = {{events_sync_threshold}}
+sync_interval = {{events_sync_interval}}
 
 [http]
 methods_allowed=GET, POST, DELETE, PUT, PATCH, HEAD, OPTIONS
@@ -360,6 +377,7 @@ list_key=sample,list
 sso_conf_contents = '''[main]
 encrypt_email=True
 encrypt_password=True
+email_service=
 smtp_conn=
 site_name=
 
@@ -370,7 +388,7 @@ default=sql
 name=
 
 [hash_secret]
-rounds=100000
+rounds=120000
 salt_size=64 # In bytes = 512 bits
 
 [apps]
@@ -387,6 +405,7 @@ reject_if_not_listed=False
 inform_if_locked=True
 inform_if_not_confirmed=True
 inform_if_not_approved=True
+inform_if_totp_missing=False
 
 [password_reset]
 valid_for=1440 # In minutes = 1 day
@@ -591,6 +610,9 @@ directories = (
     'pickup/processed/csv',
     'profiler',
     'work',
+    'work/events',
+    'work/events/v1',
+    'work/events/v2',
     'work/hot-deploy',
     'work/hot-deploy/current',
     'work/hot-deploy/backup',
@@ -614,23 +636,6 @@ directories = (
 
 # ################################################################################################################################
 
-files = {
-    'config/repo/logging.conf': common_logging_conf_contents.format(log_path='./logs/server.log'),
-    'config/repo/service-sources.txt': service_sources_contents,
-    'config/repo/lua/internal/zato.rename_if_exists.lua': lua_zato_rename_if_exists,
-    'config/repo/sql.conf': sql_conf_contents,
-
-    'config/repo/static/sso/email/en_GB/signup-confirm.txt': CommonSSO.EmailTemplate.SignupConfirm,
-    'config/repo/static/sso/email/en_GB/signup-welcome.txt': CommonSSO.EmailTemplate.SignupWelcome,
-    'config/repo/static/sso/email/en_GB/password-reset-link.txt': CommonSSO.EmailTemplate.PasswordResetLink,
-
-    'config/repo/static/sso/email/en_US/signup-confirm.txt': CommonSSO.EmailTemplate.SignupConfirm,
-    'config/repo/static/sso/email/en_US/signup-welcome.txt': CommonSSO.EmailTemplate.SignupWelcome,
-    'config/repo/static/sso/email/en_US/password-reset-link.txt': CommonSSO.EmailTemplate.PasswordResetLink,
-}
-
-# ################################################################################################################################
-
 priv_key_location = './config/repo/config-priv.pem'
 priv_key_location = './config/repo/config-pub.pem'
 
@@ -641,20 +646,19 @@ class Create(ZatoCommand):
     """ Creates a new Zato server
     """
     needs_empty_dir = True
-    allow_empty_secrets = True
 
     opts = deepcopy(common_odb_opts)
     opts.extend(kvdb_opts)
 
     opts.append({'name':'cluster_name', 'help':'Name of the cluster to join'})
-    opts.append({'name':'server_name', 'help':"Server's name"})
-    opts.append({'name':'--pub_key_path', 'help':"Path to the server's public key in PEM"})
-    opts.append({'name':'--priv_key_path', 'help':"Path to the server's private key in PEM"})
-    opts.append({'name':'--cert_path', 'help':"Path to the server's certificate in PEM"})
-    opts.append({'name':'--ca_certs_path', 'help':"Path to list of PEM certificates the server will trust"})
-    opts.append({'name':'--secret_key', 'help':"Server's secret key (must be the same for all servers)"})
-    opts.append({'name':'--jwt_secret', 'help':"Server's JWT secret (must be the same for all servers)"})
-    opts.append({'name':'--http_port', 'help':"Server's HTTP port"})
+    opts.append({'name':'server_name', 'help':'Server\'s name'})
+    opts.append({'name':'--pub_key_path', 'help':'Path to the server\'s public key in PEM'})
+    opts.append({'name':'--priv_key_path', 'help':'Path to the server\'s private key in PEM'})
+    opts.append({'name':'--cert_path', 'help':'Path to the server\'s certificate in PEM'})
+    opts.append({'name':'--ca_certs_path', 'help':'Path to list of PEM certificates the server will trust'})
+    opts.append({'name':'--secret_key', 'help':'Server\'s secret key (must be the same for all servers)'})
+    opts.append({'name':'--jwt_secret', 'help':'Server\'s JWT secret (must be the same for all servers)'})
+    opts.append({'name':'--http_port', 'help':'Server\'s HTTP port'})
 
 # ################################################################################################################################
 
@@ -668,6 +672,11 @@ class Create(ZatoCommand):
         self.target_dir = os.path.abspath(args.path)
         self.dirs_prepared = False
         self.token = uuid.uuid4().hex.encode('utf8')
+
+# ################################################################################################################################
+
+    def allow_empty_secrets(self):
+        return True
 
 # ################################################################################################################################
 
@@ -711,6 +720,24 @@ class Create(ZatoCommand):
         from zato.common.crypto.const import well_known_data
         from zato.common.defaults import http_plain_server_port
         from zato.common.odb.model import Cluster, Server
+        from zato.common.util.logging_ import get_logging_conf_contents
+
+        logging_conf_contents = get_logging_conf_contents()
+
+        files = {
+            'config/repo/logging.conf': logging_conf_contents,
+            'config/repo/service-sources.txt': service_sources_contents,
+            'config/repo/lua/internal/zato.rename_if_exists.lua': lua_zato_rename_if_exists,
+            'config/repo/sql.conf': sql_conf_contents,
+
+            'config/repo/static/sso/email/en_GB/signup-confirm.txt': CommonSSO.EmailTemplate.SignupConfirm,
+            'config/repo/static/sso/email/en_GB/signup-welcome.txt': CommonSSO.EmailTemplate.SignupWelcome,
+            'config/repo/static/sso/email/en_GB/password-reset-link.txt': CommonSSO.EmailTemplate.PasswordResetLink,
+
+            'config/repo/static/sso/email/en_US/signup-confirm.txt': CommonSSO.EmailTemplate.SignupConfirm,
+            'config/repo/static/sso/email/en_US/signup-welcome.txt': CommonSSO.EmailTemplate.SignupWelcome,
+            'config/repo/static/sso/email/en_US/password-reset-link.txt': CommonSSO.EmailTemplate.PasswordResetLink,
+        }
 
         default_http_port = default_http_port or http_plain_server_port
 
@@ -754,14 +781,14 @@ class Create(ZatoCommand):
                 file_name = os.path.join(self.target_dir, file_name)
                 if show_output:
                     self.logger.debug('Creating {}'.format(file_name))
-                f = open(file_name, 'w')
+                f = open_w(file_name)
                 f.write(contents)
                 f.close()
 
             logging_conf_loc = os.path.join(self.target_dir, 'config/repo/logging.conf')
 
-            logging_conf = open(logging_conf_loc).read()
-            open(logging_conf_loc, 'w').write(logging_conf.format(
+            logging_conf = open_r(logging_conf_loc).read()
+            open_w(logging_conf_loc).write(logging_conf.format(
                 log_path=os.path.join(self.target_dir, 'logs', 'zato.log')))
 
             if show_output:
@@ -771,8 +798,12 @@ class Create(ZatoCommand):
             if odb_engine.startswith('postgresql'):
                 odb_engine = 'postgresql+pg8000'
 
+            # This can be overridden through an environment variable
+            scheduler_use_tls = os.environ.get('ZATO_SERVER_SCHEDULER_USE_TLS', True)
+            scheduler_use_tls = as_bool(scheduler_use_tls)
+
             server_conf_loc = os.path.join(self.target_dir, 'config/repo/server.conf')
-            server_conf = open(server_conf_loc, 'w')
+            server_conf = open_w(server_conf_loc)
             server_conf.write(
                 server_conf_template.format(
                     port=getattr(args, 'http_port', None) or default_http_port,
@@ -783,25 +814,31 @@ class Create(ZatoCommand):
                     odb_port=args.odb_port or '',
                     odb_pool_size=default_odb_pool_size,
                     odb_user=args.odb_user or '',
-                    kvdb_host=args.kvdb_host,
-                    kvdb_port=args.kvdb_port,
+                    kvdb_host=self.get_arg('kvdb_host'),
+                    kvdb_port=self.get_arg('kvdb_port'),
                     initial_cluster_name=args.cluster_name,
                     initial_server_name=args.server_name,
+                    events_fs_data_path=EventsDefault.fs_data_path,
+                    events_sync_threshold=EventsDefault.sync_threshold,
+                    events_sync_interval=EventsDefault.sync_interval,
+                    scheduler_host=self.get_arg('scheduler_host', SCHEDULER.DefaultHost),
+                    scheduler_port=self.get_arg('scheduler_port', SCHEDULER.DefaultPort),
+                    scheduler_use_tls=scheduler_use_tls
                 ))
             server_conf.close()
 
             pickup_conf_loc = os.path.join(self.target_dir, 'config/repo/pickup.conf')
-            pickup_conf_file = open(pickup_conf_loc, 'w')
+            pickup_conf_file = open_w(pickup_conf_loc)
             pickup_conf_file.write(pickup_conf)
             pickup_conf_file.close()
 
             user_conf_loc = os.path.join(self.target_dir, 'config/repo/user.conf')
-            user_conf = open(user_conf_loc, 'w')
+            user_conf = open_w(user_conf_loc)
             user_conf.write(user_conf_contents)
             user_conf.close()
 
             sso_conf_loc = os.path.join(self.target_dir, 'config/repo/sso.conf')
-            sso_conf = open(sso_conf_loc, 'w')
+            sso_conf = open_w(sso_conf_loc)
             sso_conf.write(sso_conf_contents)
             sso_conf.close()
 
@@ -810,14 +847,14 @@ class Create(ZatoCommand):
             fernet1 = Fernet(key1)
 
             secrets_conf_loc = os.path.join(self.target_dir, 'config/repo/secrets.conf')
-            secrets_conf = open(secrets_conf_loc, 'w')
+            secrets_conf = open_w(secrets_conf_loc)
 
-            kvdb_password = args.kvdb_password or ''
+            kvdb_password = self.get_arg('kvdb_password') or ''
             kvdb_password = kvdb_password.encode('utf8')
             kvdb_password = fernet1.encrypt(kvdb_password)
             kvdb_password = kvdb_password.decode('utf8')
 
-            odb_password = args.odb_password or ''
+            odb_password = self.get_arg('odb_password') or ''
             odb_password = odb_password.encode('utf8')
             odb_password = fernet1.encrypt(odb_password)
             odb_password = odb_password.decode('utf8')
@@ -856,7 +893,7 @@ class Create(ZatoCommand):
             bytes_to_str_encoding = 'utf8' if PY3 else ''
 
             simple_io_conf_loc = os.path.join(self.target_dir, 'config/repo/simple-io.conf')
-            simple_io_conf = open(simple_io_conf_loc, 'w')
+            simple_io_conf = open_w(simple_io_conf_loc)
             simple_io_conf.write(simple_io_conf_contents.format(
                 bytes_to_str_encoding=bytes_to_str_encoding
             ))
@@ -875,7 +912,7 @@ class Create(ZatoCommand):
                     # That is fine, the directory must have already created in one of previous iterations
                     pass
                 finally:
-                    api_file = open(full_path, 'w')
+                    api_file = open_w(full_path)
                     api_file.write(contents)
                     api_file.close()
 

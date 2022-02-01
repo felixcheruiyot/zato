@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) Zato Source s.r.o. https://zato.io
+Copyright (C) 2022, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -31,15 +29,18 @@ from six import PY3
 from past.builtins import basestring, unicode
 
 # Zato
-from zato.common.api import CHANNEL, DATA_FORMAT, JSON_RPC, HL7, HTTP_SOAP, RATE_LIMIT, SEC_DEF_TYPE, SIMPLE_IO, TRACE1, \
+from zato.common.api import CHANNEL, DATA_FORMAT, JSON_RPC, HL7, HTTP_SOAP, MISC, RATE_LIMIT, SEC_DEF_TYPE, SIMPLE_IO, TRACE1, \
      URL_PARAMS_PRIORITY, URL_TYPE, ZATO_NONE, ZATO_OK
 from zato.common.audit_log import DataReceived, DataSent
+from zato.common.const import ServiceConst
 from zato.common.exception import HTTP_RESPONSES
 from zato.common.hl7 import HL7Exception
 from zato.common.json_internal import dumps, loads
 from zato.common.json_schema import DictError as JSONSchemaDictError, ValidationException as JSONSchemaValidationException
+from zato.common.marshal_.api import ModelValidationError
 from zato.common.rate_limiting.common import AddressNotAllowed, BaseException as RateLimitingException, RateLimitReached
 from zato.common.util.api import payload_from_request
+from zato.common.util.exception import pretty_format_exception
 from zato.common.xml_ import zato_namespace
 from zato.server.connection.http_soap import BadRequest, ClientHTTPError, Forbidden, MethodNotAllowed, NotFound, \
      TooManyRequests, Unauthorized
@@ -51,13 +52,11 @@ stack_format = None
 
 if 0:
     from zato.server.service import Service
-    from zato.server.service.reqresp import Response
     from zato.server.base.parallel import ParallelServer
     from zato.server.connection.http_soap.url_data import URLData
 
     # For pyflakes
     ParallelServer = ParallelServer
-    Response = Response
     Service = Service
     URLData = URLData
 
@@ -73,6 +72,7 @@ accept_any_internal = HTTP_SOAP.ACCEPT.ANY_INTERNAL
 
 # ################################################################################################################################
 
+# https://tools.ietf.org/html/rfc6585
 TOO_MANY_REQUESTS = 429
 
 _status_bad_request = '{} {}'.format(BAD_REQUEST, HTTP_RESPONSES[BAD_REQUEST])
@@ -139,9 +139,23 @@ response_404_log = 'URL not found `%s` (Method:%s; Accept:%s; CID:%s)'
 # ################################################################################################################################
 
 def client_json_error(cid, details):
+
+    # This may be a tuple of arguments to an exception object
+    if isinstance(details, tuple):
+        exc_details = []
+        for item in details:
+            if isinstance(item, bytes):
+                item = item.decode('utf8')
+            exc_details.append(item)
+    else:
+        exc_details = details
+        if isinstance(exc_details, bytes):
+            exc_details = exc_details.decode('utf8')
+
     message = {'result':'Error', 'cid':cid}
     if details:
-        message['details'] = details
+        message['details'] = exc_details
+
     return dumps(message)
 
 # ################################################################################################################################
@@ -173,7 +187,7 @@ def get_client_error_wrapper(transport, data_format):
 
 # ################################################################################################################################
 
-class _CachedResponse(object):
+class _CachedResponse:
     """ A wrapper for responses served from caches.
     """
     __slots__ = ('payload', 'content_type', 'headers', 'status_code')
@@ -186,7 +200,7 @@ class _CachedResponse(object):
 
 # ################################################################################################################################
 
-class _HashCtx(object):
+class _HashCtx:
     """ Encapsulates information needed to compute a hash value of an incoming request.
     """
     def __init__(self, raw_request, channel_item, channel_params, wsgi_environ):
@@ -197,12 +211,12 @@ class _HashCtx(object):
 
 # ################################################################################################################################
 
-class RequestDispatcher(object):
+class RequestDispatcher:
     """ Dispatches all the incoming HTTP/SOAP requests to appropriate handlers.
     """
     def __init__(self, server=None, url_data=None, security=None, request_handler=None, simple_io_config=None,
             return_tracebacks=None, default_error_message=None, http_methods_allowed=None):
-        # type: (ParallelServer, URLData, object, object, dict, bool, unicode, list)
+        # type: (ParallelServer, URLData, object, RequestHandler, dict, bool, unicode, list)
 
         self.server = server
         self.url_data = url_data
@@ -300,7 +314,7 @@ class RequestDispatcher(object):
 
                 # Raise 404 if the channel is inactive
                 if not channel_item['is_active']:
-                    logger.warn('url_data:`%s` is not active, raising NotFound', sorted(url_match.items()))
+                    logger.warning('url_data:`%s` is not active, raising NotFound', sorted(url_match.items()))
                     raise NotFound(cid, 'Channel inactive')
 
                 # We need to read security info here so we know if POST needs to be
@@ -417,7 +431,7 @@ class RequestDispatcher(object):
                 _format_exc = format_exc()
                 status = _status_internal_server_error
 
-                if isinstance(e, ClientHTTPError):
+                if isinstance(e, (ClientHTTPError, ModelValidationError)):
 
                     response = e.msg
                     status_code = e.status
@@ -428,8 +442,15 @@ class RequestDispatcher(object):
                         status = _status_unauthorized
                         wsgi_environ['zato.http.response.headers']['WWW-Authenticate'] = e.challenge
 
-                    elif isinstance(e, BadRequest):
+                    elif isinstance(e, (BadRequest, ModelValidationError)):
                         status = _status_bad_request
+
+                        # This is the channel that Dashboard uses and we want to return
+                        # all the details in such cases because it is useful during development
+                        if channel_item['name'] == MISC.DefaultAdminInvokeChannel:
+                            response = e.msg
+                        else:
+                            response = e.msg if e.needs_msg else 'Invalid input'
 
                     elif isinstance(e, NotFound):
                         status = _status_not_found
@@ -462,7 +483,12 @@ class RequestDispatcher(object):
 
                     else:
                         status_code = INTERNAL_SERVER_ERROR
-                        response = _format_exc if self.return_tracebacks else self.default_error_message
+
+                        # Same comment as in BadRequest, ModelValidationError above
+                        if channel_item['name'] == MISC.DefaultAdminInvokeChannel:
+                            response = pretty_format_exception(e, cid)
+                        else:
+                            response = e.args if self.return_tracebacks else self.default_error_message
 
                 _exc = _stack_format(e, style='color', show_vals='like_source', truncate_vals=5000,
                     add_summary=True, source_lines=20) if _stack_format else _format_exc
@@ -532,7 +558,7 @@ class RequestDispatcher(object):
 
 # ################################################################################################################################
 
-class RequestHandler(object):
+class RequestHandler:
     """ Handles individual HTTP requests to a given service.
     """
     def __init__(self, server=None):
@@ -594,7 +620,7 @@ class RequestHandler(object):
             channel_params = path_params
         else:
             if _qs:
-                channel_params = dict((key, value) for key, value in _qs.items())
+                channel_params = {key:value for key, value in _qs.items()}
             else:
                 channel_params = {}
             channel_params.update(path_params)
@@ -660,9 +686,9 @@ class RequestHandler(object):
             path_info, soap_action, channel_type=CHANNEL.HTTP_SOAP, _response_404=response_404):
         """ Create a new instance of a service and invoke it.
         """
-        service, is_active = self.server.service_store.new_instance(channel_item.service_impl_name)
+        service, is_active = self.server.service_store.new_instance(channel_item.service_impl_name) # type: (Service, bool)
         if not is_active:
-            logger.warn('Could not invoke an inactive service:`%s`, cid:`%s`', service.get_name(), cid)
+            logger.warning('Could not invoke an inactive service:`%s`, cid:`%s`', service.get_name(), cid)
             raise NotFound(cid, _response_404.format(
                 path_info, wsgi_environ.get('REQUEST_METHOD'), wsgi_environ.get('HTTP_ACCEPT'), cid))
 
@@ -716,18 +742,26 @@ class RequestHandler(object):
 
 # ################################################################################################################################
 
+    def _needs_admin_response(
+        self,
+        service_instance, # type: Service
+        service_invoker_name=ServiceConst.ServiceInvokerName # type: str
+        ) -> 'bool':
+        return isinstance(service_instance, AdminService) and service_instance.name != service_invoker_name
+
+# ################################################################################################################################
+
     def set_payload(self, response, data_format, transport, service_instance, _sio_json=SIMPLE_IO.FORMAT.JSON,
         _url_type_soap=URL_TYPE.SOAP, _dict_like=(DATA_FORMAT.JSON, DATA_FORMAT.DICT), _AdminService=AdminService,
         _dumps=dumps, _basestring=basestring):
         """ Sets the actual payload to represent the service's response out of what the service produced.
         This includes converting dictionaries into JSON, adding Zato metadata and wrapping the mesasge in SOAP if need be.
         """
-        # type: (Response, str, str, Service)
 
-        if isinstance(service_instance, AdminService):
+        if self._needs_admin_response(service_instance):
             if data_format == _sio_json:
                 zato_env = {'zato_env':{'result':response.result, 'cid':service_instance.cid, 'details':response.result_details}}
-                if response.payload:
+                if response.payload and (not isinstance(response.payload, str)):
                     payload = response.payload.getvalue(False)
                     payload.update(zato_env)
                 else:
@@ -763,8 +797,6 @@ class RequestHandler(object):
     def set_content_type(self, response, data_format, transport, ignored_url_match, channel_item):
         """ Sets a response's content type if one hasn't been supplied by the user.
         """
-        # type: (Response, str, str, object, object)
-
         # A user provided his or her own content type ..
         if response.content_type_changed:
             content_type = response.content_type

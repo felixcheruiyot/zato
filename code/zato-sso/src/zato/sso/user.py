@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from contextlib import closing
@@ -45,26 +43,16 @@ from zato.sso.util import check_credentials, check_remote_app_exists, make_data_
 
 # ################################################################################################################################
 
-# Type checking
-import typing
-
-if typing.TYPE_CHECKING:
-
-    # stdlib
-    from typing import Callable
-
-    # Zato
+if 0:
     from zato.common.odb.model import SSOSession
+    from zato.common.typing_ import anydict, callable_
     from zato.server.base.parallel import ParallelServer
-
-    # For pyflakes
-    Callable = Callable
-    ParallelServer = ParallelServer
-    SSOSession = SSOSession
+    from zato.sso.totp_ import TOTPAPI
 
 # ################################################################################################################################
 
-logger = getLogger('zato')
+logger           = getLogger('zato')
+logger_audit_pii = getLogger('zato_audit_pii')
 
 # ################################################################################################################################
 
@@ -158,17 +146,17 @@ _no_such_value = object()
 class update:
 
     # Accessible to regular users only
-    regular_attrs = set(('email', 'display_name', 'first_name', 'middle_name', 'last_name', 'is_totp_enabled', 'totp_label'))
+    regular_attrs = {'username', 'email', 'display_name', 'first_name', 'middle_name', 'last_name', 'is_totp_enabled',
+        'totp_label'}
 
     # Accessible to super-users only
-    super_user_attrs = set(('is_locked', 'password_expiry', 'password_must_change', 'sign_up_status',
-        'approval_status'))
+    super_user_attrs = {'is_locked', 'password_expiry', 'password_must_change', 'sign_up_status', 'approval_status'}
 
     # All updateable attributes
     all_update_attrs = regular_attrs.union(super_user_attrs)
 
     # All updateable attributes + user_id
-    all_attrs = all_update_attrs.union(set(['user_id']))
+    all_attrs = all_update_attrs.union({'user_id'})
 
     # There cannot be more than this many attributes on input
     max_len_attrs = len(all_update_attrs)
@@ -180,20 +168,20 @@ class update:
     datetime_attrs = ('password_expiry',)
 
     # All attributes that may be set to None / NULL
-    none_allowed = set(regular_attrs)
+    none_allowed = set(regular_attrs) - {'username'}
 
 # ################################################################################################################################
 
 class change_password:
 
     # Accessible to regular users only
-    regular_attrs = set(('old_password', 'new_password'))
+    regular_attrs = {'old_password', 'new_password'}
 
     # Accessible to super-users only
-    super_user_attrs = set(('new_password', 'password_expiry', 'password_must_change'))
+    super_user_attrs = {'new_password', 'password_expiry', 'password_must_change'}
 
     # This is used only for input validation which is why it is not called 'all_update_attrs'
-    all_attrs = regular_attrs.union(super_user_attrs).union(set(['user_id']))
+    all_attrs = regular_attrs.union(super_user_attrs).union({'user_id'})
 
     # There cannot be more than this many attributes on input
     max_len_attrs = len(all_attrs)
@@ -206,7 +194,7 @@ class Forbidden(Exception):
 
 # ################################################################################################################################
 
-class User(object):
+class User:
     """ A user entity representing a person in SSO.
     """
     __slots__ = _all_attrs.keys()
@@ -221,7 +209,7 @@ class User(object):
 
 # ################################################################################################################################
 
-class CreateUserCtx(object):
+class CreateUserCtx:
     """ A business object to carry user creation configuration around.
     """
     __slots__ = ('data', 'is_active', 'is_internal', 'is_super_user', 'password_expiry', 'encrypt_password', 'encrypt_email',
@@ -241,14 +229,25 @@ class CreateUserCtx(object):
 
 # ################################################################################################################################
 
-class UserAPI(object):
+class UserAPI:
     """ The main object through SSO users are managed.
     """
-    def __init__(self, server, sso_conf, odb_session_func, encrypt_func, decrypt_func, hash_func, verify_hash_func,
-            new_user_id_func):
-        # type: (ParallelServer, dict, Callable, Callable, Callable, Callable, Callable, Callable)
+    def __init__(
+        self,
+        server,           # type: ParallelServer
+        sso_conf,         # type: anydict
+        totp,             # type: TOTPAPI
+        odb_session_func, # type: callable_
+        encrypt_func,     # type: callable_
+        decrypt_func,     # type: callable_
+        hash_func,        # type: callable_
+        verify_hash_func, # type: callable_
+        new_user_id_func, # type: callable_
+        ) -> 'None':
+
         self.server = server
         self.sso_conf = sso_conf
+        self.totp = totp
         self.odb_session_func = odb_session_func
         self.is_sqlite = None
         self.encrypt_func = encrypt_func
@@ -272,7 +271,8 @@ class UserAPI(object):
         }
 
         # For convenience, sessions are accessible through user API.
-        self.session = SessionAPI(self.sso_conf, self.encrypt_func, self.decrypt_func, self.hash_func, self.verify_hash_func)
+        self.session = SessionAPI(self.sso_conf, self.totp, self.encrypt_func, self.decrypt_func, self.hash_func,
+            self.verify_hash_func)
 
 # ################################################################################################################################
 
@@ -369,11 +369,12 @@ class UserAPI(object):
         password = make_password_secret(
             ctx.data['password'], self.encrypt_password, self.encrypt_func, self.hash_func)
 
-        # .. while emails are only encrypted, and it is optional.
-        if self.encrypt_email:
-            email = self._get_encrypted_email(ctx.data.get('email'))
-        else:
-            email = None
+        # .. take into account the fact that emails are optional too ..
+        email = ctx.data.get('email')
+
+        #  .. emails are only encrypted, and whether to do it is optional ..
+        if email and self.encrypt_email:
+            email = self._get_encrypted_email(email)
 
         user_model.username = ctx.data['username']
         user_model.email = email
@@ -452,12 +453,12 @@ class UserAPI(object):
 
             # The only field always required
             if not ctx.data.get('username'):
-                logger.warn('Missing `username` on input')
+                logger.warning('Missing `username` on input')
                 raise ValidationError(status_code.username.invalid, True)
 
             # Make sure the username is unique
             if get_user_by_name(session, ctx.data['username'], needs_approved=False):
-                logger.warn('Username `%s` already exists', ctx.data['username'])
+                logger.warning('Username `%s` already exists', ctx.data['username'])
                 raise ValidationError(status_code.username.exists, False)
 
             ctx.is_active = True
@@ -612,17 +613,23 @@ class UserAPI(object):
 
 # ################################################################################################################################
 
-    def _get_current_session(self, cid, current_ust, current_app, remote_addr, needs_super_user):
+    def _get_current_session(
+        self,
+        cid,         # type: str
+        current_ust, # type: str
+        current_app, # type: str
+        remote_addr, # type: str
+        needs_super_user, # type: bool
+        ) -> 'SSOSession':
         """ Returns current session info or raises an exception if it could not be found.
         Optionally, requires that a super-user be owner of current_ust.
         """
-        # type: (unicode, unicode, unicode, unicode, bool) -> SSOSession
         return self.session.get_current_session(cid, current_ust, current_app, remote_addr, needs_super_user)
 
 # ################################################################################################################################
 
     def _get_user(self, cid, func, query_criteria, current_ust, current_app, remote_addr, _needs_super_user,
-        queries_current_session, _utcnow=_utcnow):
+        queries_current_session, return_all_attrs, _utcnow=_utcnow):
         """ Returns a user by a specific function and business value.
         """
         with closing(self.odb_session_func()) as session:
@@ -648,15 +655,29 @@ class UserAPI(object):
                 out = UserEntity()
                 out.is_current_super_user = current_session.is_super_user
 
-                if current_session.is_super_user:
+                access_msg = 'Cid:%s. Accessing %s user attrs (s:%d, r:%d).'
+
+                if current_session.is_super_user or return_all_attrs:
+                    logger_audit_pii.info(access_msg, cid, 'all', current_session.is_super_user, return_all_attrs)
+
+                    # This will suffice for 99% of purposes ..
                     attrs = _all_super_user_attrs
+
+                    # .. but to return this, it does not suffice to be a super-user,
+                    # .. we need to be requested to do it explicitly via this flag.
+                    if return_all_attrs:
+                        attrs['totp_key'] = None
                     out.is_approval_needed = self.sso_conf.signup.is_approval_needed
                 else:
+                    logger_audit_pii.info(access_msg, cid, 'regular', current_session.is_super_user, return_all_attrs)
                     attrs = regular_attrs
 
                 for key in attrs:
 
                     value = getattr(info, key, None)
+
+                    if key == 'is_approval_needed':
+                        value = value or False
 
                     if isinstance(value, datetime):
                         value = value.isoformat()
@@ -665,7 +686,7 @@ class UserAPI(object):
                     elif key in ('totp_key', 'totp_label'):
                         value = self.decrypt_func(value)
 
-                        # .. do not return our internal constant  if not label has been assign to TOTP.
+                        # .. do not return our internal constant if no label has been assign to TOTP.
                         if key == 'totp_label':
                             if value == TOTP.default_label:
                                 value = ''
@@ -677,39 +698,47 @@ class UserAPI(object):
                         try:
                             out.email = self.decrypt_func(out.email)
                         except Exception:
-                            logger.warn('Could not decrypt email, user_id:`%s` (%s)', out.user_id, format_exc())
+                            logger.warning('Could not decrypt email, user_id:`%s` (%s)', out.user_id, format_exc())
 
                 # Custom attributes
                 out.attr = AttrAPI(cid, current_session.user_id, current_session.is_super_user, current_app, remote_addr,
-                    self.odb_session_func, self.is_sqlite, self.encrypt_func, self.decrypt_func, out.user_id)
+                    self.odb_session_func, self.is_sqlite, self.encrypt_func, self.decrypt_func, info.user_id)
 
                 return out
 
 # ################################################################################################################################
 
-    def get_current_user(self, cid, current_ust, current_app, remote_addr):
+    def get_current_user(self, cid, current_ust, current_app, remote_addr, return_all_attrs=False):
         """ Returns a user object by that person's current UST.
         """
         # PII audit comes first
         audit_pii.info(cid, 'user.get_current_user', extra={'current_app':current_app, 'remote_addr':remote_addr})
 
         return self._get_user(
-            cid, get_user_by_ust, self.decrypt_func(current_ust), current_ust, current_app, remote_addr, False, True)
+            cid, get_user_by_ust, self.decrypt_func(current_ust), current_ust, current_app, remote_addr,
+            _needs_super_user=False,
+            queries_current_session=True,
+            return_all_attrs=return_all_attrs
+        )
 
 # ################################################################################################################################
 
-    def get_user_by_id(self, cid, user_id, current_ust, current_app, remote_addr):
+    def get_user_by_id(self, cid, user_id, current_ust, current_app, remote_addr, return_all_attrs=False):
         """ Returns a user object by that person's ID.
         """
         # PII audit comes first
         audit_pii.info(cid, 'user.get_user_by_id', target_user=user_id,
             extra={'current_app':current_app, 'remote_addr':remote_addr})
 
-        return self._get_user(cid, get_user_by_id, user_id, current_ust, current_app, remote_addr, True, False)
+        return self._get_user(cid, get_user_by_id, user_id, current_ust, current_app, remote_addr,
+            _needs_super_user=True,
+            queries_current_session=False,
+            return_all_attrs=return_all_attrs
+        )
 
 # ################################################################################################################################
 
-    def get_user_by_linked_auth(self, cid, sec_type, sec_username, current_ust, current_app, remote_addr):
+    def get_user_by_linked_auth(self, cid, sec_type, sec_username, current_ust, current_app, remote_addr, return_all_attrs=False):
         """ Returns a user object by that person's linked security name, e.g. maps a Basic Auth username to an SSO user.
         """
         # PII audit comes first
@@ -717,7 +746,11 @@ class UserAPI(object):
             extra={'current_app':current_app, 'remote_addr':remote_addr, 'sec_type': sec_type})
 
         return self._get_user(
-            cid, get_user_by_linked_sec, (sec_type, sec_username), current_ust, current_app, remote_addr, False, True)
+            cid, get_user_by_linked_sec, (sec_type, sec_username), current_ust, current_app, remote_addr,
+            _needs_super_user=False,
+            queries_current_session=True,
+            return_all_attrs=return_all_attrs
+        )
 
 # ################################################################################################################################
 
@@ -771,14 +804,14 @@ class UserAPI(object):
 
             if rows_matched != 1:
                 msg = 'Expected for rows_matched to be 1 instead of %d, user_id:`%s`, username:`%s`'
-                logger.warn(msg, rows_matched, user_id, username)
+                logger.warning(msg, rows_matched, user_id, username)
 
             # After deleting the user from ODB, we can remove a reference to this account
             # from the map of linked accounts.
             for auth_id_link_map in self.auth_id_link_map.values(): # type: dict
                 to_delete = set()
 
-                for auth_id, sso_user_id in auth_id_link_map.items():
+                for sso_user_id in auth_id_link_map.values():
                     if user_id == sso_user_id:
                         to_delete.add(user_id)
 
@@ -882,7 +915,7 @@ class UserAPI(object):
           'new_password': new_password,
           'totp_code': totp_code,
         }
-        login_ctx = LoginCtx(remote_addr, user_agent, ctx_input)
+        login_ctx = LoginCtx(cid, remote_addr, user_agent, ctx_input)
         return self.session.login(login_ctx, is_logged_in_ext=False, skip_sec=skip_sec)
 
 # ################################################################################################################################
@@ -913,7 +946,7 @@ class UserAPI(object):
                 unexpected.append(attr)
 
         if unexpected:
-            logger.warn('Unexpected data on input %s', unexpected)
+            logger.warning('Unexpected data on input %s', unexpected)
             raise ValidationError(status_code.common.invalid_input, False)
 
 # ################################################################################################################################
@@ -927,7 +960,7 @@ class UserAPI(object):
         else:
             # .. and that no one attempts to overload us with it ..
             if len(data) > max_len_attrs:
-                logger.warn('Too many data arguments %d > %d', len(data), max_len_attrs)
+                logger.warning('Too many data arguments %d > %d', len(data), max_len_attrs)
                 raise ValidationError(status_code.common.invalid_input, False)
 
             # .. also, make sure that, no matter what kind of user this is, only supported arguments are given on input.
@@ -942,7 +975,7 @@ class UserAPI(object):
         """ Low-level implementation of user updates.
         """
         if not(user_id or update_self):
-            logger.warn('At least one of user_id or update_self is required')
+            logger.warning('At least one of user_id or update_self is required')
             raise ValidationError(status_code.common.invalid_input, False)
 
         # Basic checks first
@@ -960,22 +993,41 @@ class UserAPI(object):
             else:
 
                 # If current session belongs to a regular user yet a user_id was given on input,
-                # we may not continue because only super-users may update other users.
+                # we may not continue because only super-users may update other users
                 if user_id and user_id != current_session.user_id:
-                    logger.warn('Current user `%s` is not a super-user, cannot update user `%s`',
+                    logger.warning('Current user `%s` is not a super-user, cannot update user `%s`',
                         current_session.user_id, user_id)
                     raise ValidationError(status_code.common.invalid_input, False)
 
-                # whereas regular users may change only basic attributes.
+                # Regular users may change only basic attributes
                 attrs_allowed = update.regular_attrs
 
             # Make sure current user provided only these attributes that have been explicitly allowed
             self._ensure_no_unknown_update_attrs(attrs_allowed, data)
 
+            # If username is to be changed, we need to ensure that such a username is not used by another user
+            username = data.get('username') # type: str
+
+            # We have a username in put ..
+            if username:
+
+                # .. now, we can check whether that username is already in use ..
+                existing_user = get_user_by_name(session, username, False) # type: UserModel
+
+                # .. if it does ..
+                if existing_user:
+
+                    # .. and if the other user is not the same that we are editing ..
+                    if existing_user.user_id != _user_id:
+
+                        # .. we need to reject the new username.
+                        logger.warning('Username `%s` already exists (update)',username)
+                        raise ValidationError(status_code.username.exists, False)
+
             # If sign_up_status was given on input, it must be among allowed values
             sign_up_status = data.get('sign_up_status')
             if sign_up_status and sign_up_status not in const.signup_status():
-                logger.warn('Invalid sign_up_status `%s`', sign_up_status)
+                logger.warning('Invalid sign_up_status `%s`', sign_up_status)
                 raise ValidationError(status_code.common.invalid_input, False)
 
             # All booleans must be actually booleans
@@ -983,7 +1035,7 @@ class UserAPI(object):
                 value = data.get(attr, _no_such_value)
                 if value is not _no_such_value:
                     if not isinstance(value, bool):
-                        logger.warn('Expected for `%s` to be a boolean instead of `%r` (%s)', attr, value, type(value))
+                        logger.warning('Expected for `%s` to be a boolean instead of `%r` (%s)', attr, value, type(value))
                         raise ValidationError(status_code.common.invalid_input, False)
 
             # All datetime objects must be actual Python datetime objects
@@ -991,14 +1043,14 @@ class UserAPI(object):
                 value = data.get(attr, _no_such_value)
                 if value is not _no_such_value:
                     if not isinstance(value, datetime):
-                        logger.warn('Expected for `%s` to be a datetime instead of `%r` (%s)', attr, value, type(value))
+                        logger.warning('Expected for `%s` to be a datetime instead of `%r` (%s)', attr, value, type(value))
                         raise ValidationError(status_code.common.invalid_input, False)
 
             # Only certain attributes may be set to None / NULL
             for key, value in data.items():
                 if value is None:
                     if key not in update.none_allowed:
-                        logger.warn('Key `%s` must not be None', key)
+                        logger.warning('Key `%s` must not be None', key)
                         raise ValidationError(status_code.common.invalid_input, False)
 
             # If approval_status is on input, it must be of correct value
@@ -1006,7 +1058,7 @@ class UserAPI(object):
             if 'approval_status' in data:
                 value = data['approval_status']
                 if value not in const.approval_status():
-                    logger.warn('Invalid approval_status `%s`', value)
+                    logger.warning('Invalid approval_status `%s`', value)
                     raise ValidationError(status_code.common.invalid_input, False)
                 else:
                     data['approval_status_mod_by'] = current_session.user_id
@@ -1034,6 +1086,7 @@ class UserAPI(object):
                     values(data).\
                     where(UserModelTable.c.user_id==_user_id)
                 )
+
                 session.commit()
 
 # ################################################################################################################################
@@ -1108,7 +1161,7 @@ class UserAPI(object):
 
                 # A non-super-user tries to reset TOTP key of another user
                 if not current_session.is_super_user:
-                    logger.warn('Current user `%s` is not a super-user, cannot reset TOTP key for user `%s`',
+                    logger.warning('Current user `%s` is not a super-user, cannot reset TOTP key for user `%s`',
                         current_session.user_id, user_id)
                     raise ValidationError(status_code.common.invalid_input, False)
 
@@ -1117,7 +1170,7 @@ class UserAPI(object):
 
                     # We need to confirm that such a user exists
                     if not self.get_user_by_id(cid, user_id, current_ust, current_app, remote_addr):
-                        logger.warn('No such user `%s`', user_id)
+                        logger.warning('No such user `%s`', user_id)
                         raise ValidationError(status_code.common.invalid_input, False)
 
                     # Input user actually exists
@@ -1173,7 +1226,7 @@ class UserAPI(object):
 
                 # .. we must confirm we have a super-user's session.
                 if not current_session.is_super_user:
-                    logger.warn('Current user `%s` is not a super-user, cannot change password for user `%s`',
+                    logger.warning('Current user `%s` is not a super-user, cannot change password for user `%s`',
                         current_session.user_id, user_id)
                     raise ValidationError(status_code.common.invalid_input, False)
 
@@ -1195,7 +1248,7 @@ class UserAPI(object):
         # .. otherwise, if we are a regular user or a super-user changing his or her own password,
         # so we must check first if the old password is correct.
         if not check_credentials(self.decrypt_func, self.verify_hash_func, current_session.password, data['old_password']):
-            logger.warn('Password verification failed, user_id:`%s`', current_session.user_id)
+            logger.warning('Password verification failed, user_id:`%s`', current_session.user_id)
             raise ValidationError(status_code.auth.not_allowed, True)
         else:
 
@@ -1218,7 +1271,7 @@ class UserAPI(object):
             try:
                 self.set_password(cid, user_id, data['new_password'], must_change, password_expiry, current_app, remote_addr)
             except Exception:
-                logger.warn('Could not set a new password for user_id:`%s`, e:`%s`', current_session.user_id, format_exc())
+                logger.warning('Could not set a new password for user_id:`%s`, e:`%s`', current_session.user_id, format_exc())
                 raise ValidationError(status_code.auth.not_allowed, True)
 
 # ################################################################################################################################
@@ -1288,7 +1341,7 @@ class UserAPI(object):
 
                 return out
         except Exception:
-            logger.warn('Could not return linked accounts, e:`%s`', format_exc())
+            logger.warning('Could not return linked accounts, e:`%s`', format_exc())
 
 # ################################################################################################################################
 
@@ -1369,7 +1422,7 @@ class UserAPI(object):
             try:
                 session.commit()
             except IntegrityError:
-                logger.warn('Could not add auth link e:`%s`', format_exc())
+                logger.warning('Could not add auth link e:`%s`', format_exc())
                 raise ValueError('Auth link could not be added')
             else:
                 self._add_user_id_to_linked_auth(auth_type, auth_id, user_id)

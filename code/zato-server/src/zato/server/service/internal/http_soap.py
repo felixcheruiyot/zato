@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) Zato Source s.r.o. https://zato.io
+Copyright (C) 2022, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from contextlib import closing
@@ -16,7 +14,7 @@ from traceback import format_exc
 from paste.util.converters import asbool
 
 # Zato
-from zato.common.api import AuditLog, CONNECTION, DEFAULT_HTTP_PING_METHOD, DEFAULT_HTTP_POOL_SIZE, \
+from zato.common.api import AuditLog, CONNECTION, DATA_FORMAT, DEFAULT_HTTP_PING_METHOD, DEFAULT_HTTP_POOL_SIZE, \
      HL7, HTTP_SOAP_SERIALIZATION_TYPE, MISC, PARAMS_PRIORITY, SEC_DEF_TYPE, URL_PARAMS_PRIORITY, URL_TYPE, \
      ZATO_DEFAULT, ZATO_NONE, ZATO_SEC_USE_RBAC
 from zato.common.broker_message import CHANNEL, OUTGOING
@@ -37,7 +35,7 @@ _max_data_stored_per_message = AuditLog.Default.max_data_stored_per_message
 
 # ################################################################################################################################
 
-class _HTTPSOAPService(object):
+class _HTTPSOAPService:
     """ A common class for various HTTP/SOAP-related services.
     """
     def notify_worker_threads(self, params, action):
@@ -227,7 +225,7 @@ class Create(_CreateEdit):
     class SimpleIO(AdminSIO):
         request_elem = 'zato_http_soap_create_request'
         response_elem = 'zato_http_soap_create_response'
-        input_required = 'cluster_id', 'name', 'is_active', 'connection', 'transport', 'is_internal', 'url_path'
+        input_required = 'name', 'url_path', 'connection'
         input_optional = 'service', AsIs('security_id'), 'method', 'soap_action', 'soap_version', 'data_format', \
             'host', 'ping_method', 'pool_size', Boolean('merge_url_params_req'), 'url_params_pri', 'params_pri', \
             'serialization_type', 'timeout', AsIs('sec_tls_ca_cert_id'), Boolean('has_rbac'), 'content_type', \
@@ -237,7 +235,8 @@ class Create(_CreateEdit):
             'should_parse_on_input', 'should_validate', 'should_return_errors', 'data_encoding', \
             'is_audit_log_sent_active', 'is_audit_log_received_active', \
             Integer('max_len_messages_sent'), Integer('max_len_messages_received'), \
-            Integer('max_bytes_per_message_sent'), Integer('max_bytes_per_message_received')
+            Integer('max_bytes_per_message_sent'), Integer('max_bytes_per_message_received'), \
+            'is_active', 'transport', 'is_internal', 'cluster_id'
         output_required = ('id', 'name')
 
     def handle(self):
@@ -250,6 +249,13 @@ class Create(_CreateEdit):
         input.security_id = input.security_id if input.security_id not in (ZATO_NONE, ZATO_SEC_USE_RBAC) else None
         input.soap_action = input.soap_action if input.soap_action else ''
         input.timeout = input.get('timeout') or MISC.DEFAULT_HTTP_TIMEOUT
+
+        input.is_active   = input.get('is_active',   True)
+        input.is_internal = input.get('is_internal', False)
+
+        input.transport   = input.get('transport')   or URL_TYPE.PLAIN_HTTP
+        input.cluster_id  = input.get('cluster_id')  or self.server.cluster_id
+        input.data_format = input.get('data_format') or DATA_FORMAT.JSON
 
         # For HL7
         input.data_encoding = input.get('data_encoding') or 'utf-8'
@@ -375,7 +381,7 @@ class Edit(_CreateEdit):
     class SimpleIO(AdminSIO):
         request_elem = 'zato_http_soap_edit_request'
         response_elem = 'zato_http_soap_edit_response'
-        input_required = 'id', 'cluster_id', 'name', 'is_active', 'connection', 'transport', 'url_path'
+        input_required = 'id', 'name', 'url_path', 'connection'
         input_optional = 'service', AsIs('security_id'), 'method', 'soap_action', 'soap_version', 'data_format', \
             'host', 'ping_method', 'pool_size', Boolean('merge_url_params_req'), 'url_params_pri', 'params_pri', \
             'serialization_type', 'timeout', AsIs('sec_tls_ca_cert_id'), Boolean('has_rbac'), 'content_type', \
@@ -385,8 +391,9 @@ class Edit(_CreateEdit):
             'should_parse_on_input', 'should_validate', 'should_return_errors', 'data_encoding', \
             'is_audit_log_sent_active', 'is_audit_log_received_active', \
             Integer('max_len_messages_sent'), Integer('max_len_messages_received'), \
-            Integer('max_bytes_per_message_sent'), Integer('max_bytes_per_message_received')
-        output_required = 'id', 'name'
+            Integer('max_bytes_per_message_sent'), Integer('max_bytes_per_message_received'), \
+            'cluster_id', 'is_active', 'transport'
+        output_optional = 'id', 'name'
 
     def handle(self):
 
@@ -398,6 +405,13 @@ class Edit(_CreateEdit):
         input.security_id = input.security_id if input.security_id not in (ZATO_NONE, ZATO_SEC_USE_RBAC) else None
         input.soap_action = input.soap_action if input.soap_action else ''
 
+        input.is_active   = input.get('is_active',   True)
+        input.is_internal = input.get('is_internal', False)
+
+        input.transport   = input.get('transport')   or URL_TYPE.PLAIN_HTTP
+        input.cluster_id  = input.get('cluster_id')  or self.server.cluster_id
+        input.data_format = input.get('data_format') or DATA_FORMAT.JSON
+
         # For HL7
         input.data_encoding = input.get('data_encoding') or 'utf-8'
         input.hl7_version = input.get('hl7_version') or HL7.Const.Version.v2.id
@@ -407,7 +421,10 @@ class Edit(_CreateEdit):
 
         with closing(self.odb.session()) as session:
 
-            existing_one = session.query(HTTPSOAP.id).\
+            existing_one = session.query(
+                HTTPSOAP.id,
+                HTTPSOAP.url_path,
+                ).\
                 filter(HTTPSOAP.cluster_id==input.cluster_id).\
                 filter(HTTPSOAP.id!=input.id).\
                 filter(HTTPSOAP.name==input.name).\
@@ -416,9 +433,12 @@ class Edit(_CreateEdit):
                 first()
 
             if existing_one:
-                raise Exception('An object of that input.name:`{}` already exists in this cluster ' \
-                '(input.connection:`{}` input.transport:`{}` input.id:`{}` existing_one.id:`{}`)'.format(
-                    input.name, input.connection, input.transport, input.id, existing_one.id))
+                if input.connection == CONNECTION.CHANNEL:
+                    object_type = 'channel'
+                else:
+                    object_type = 'connection'
+                msg = 'A {} of that name:`{}` already exists in this cluster; path: `{}` (id:{})'
+                raise Exception(msg.format(object_type, input.name, existing_one.url_path, existing_one.id))
 
             # Is the service's name correct?
             service = session.query(Service).\

@@ -1,0 +1,11 @@
+mypy
+openapi-spec-validator
+playwright
+pylint
+requests-openapi
+selenium
+selenium-wire
+types-markdown
+types-pyyaml
+types-ujson
+yapf

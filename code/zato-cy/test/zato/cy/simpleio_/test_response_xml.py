@@ -40,7 +40,7 @@ class XMLResponse(BaseSIOTestCase):
                 xml_declaration = False
                 response_elem = 'my_response'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -56,7 +56,7 @@ class XMLResponse(BaseSIOTestCase):
         }
 
         result = MyService._sio.get_output(data, DATA_FORMAT.XML)
-        self.assertEquals(result, '<ns0:my_response xmlns:ns0="https://myns.zato.io">' \
+        self.assertEqual(result, '<ns0:my_response xmlns:ns0="https://myns.zato.io">' \
             '<ns0:aaa>aaa-111</ns0:aaa><ns0:bbb>222</ns0:bbb><ns0:ccc>ccc-ccc-ccc</ns0:ccc>' \
             '<ns0:eee>eee-444</ns0:eee></ns0:my_response>')
 
@@ -73,7 +73,7 @@ class XMLResponse(BaseSIOTestCase):
                 xml_encoding = 'ASCII'
                 response_elem = 'my_response'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -90,7 +90,7 @@ class XMLResponse(BaseSIOTestCase):
 
         result = MyService._sio.get_output(data, DATA_FORMAT.XML)
 
-        self.assertEquals(repr(result), repr("""<?xml version=\'1.0\' encoding=\'ASCII\'?>\n<ns0:my_response """ \
+        self.assertEqual(repr(result), repr("""<?xml version=\'1.0\' encoding=\'ASCII\'?>\n<ns0:my_response """ \
             """xmlns:ns0="https://myns.zato.io"><ns0:aaa>aaa-111</ns0:aaa><ns0:bbb>222</ns0:bbb><ns0:ccc>ccc-ccc-ccc""" \
             """</ns0:ccc><ns0:eee>eee-444</ns0:eee></ns0:my_response>"""))
 
@@ -104,7 +104,7 @@ class XMLResponse(BaseSIOTestCase):
                 xml_pretty_print = False
                 xml_declaration = False
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa1 = 'aaa-111-1'
         bbb1 = '2221'
@@ -122,7 +122,7 @@ class XMLResponse(BaseSIOTestCase):
         data = [data1, data2]
 
         result = MyService._sio.get_output(data, DATA_FORMAT.XML)
-        self.assertEquals(result, '<response><item><aaa>aaa-111-1</aaa><bbb>2221</bbb><ccc>ccc-ccc-ccc-1</ccc>' \
+        self.assertEqual(result, '<response><item><aaa>aaa-111-1</aaa><bbb>2221</bbb><ccc>ccc-ccc-ccc-1</ccc>' \
             '<eee>eee-444-1</eee></item><item><aaa>aaa-111-2</aaa><bbb>2222</bbb><ccc>ccc-ccc-ccc-2</ccc>' \
             '<eee>eee-444-2</eee></item></response>')
 
@@ -137,7 +137,7 @@ class XMLResponse(BaseSIOTestCase):
                 output = 'aaa', AsIs('bbb'), Bool('ccc'), 'ddd', Date('eee'), DateTime('fff'), Decimal('ggg'), \
                     Float('jjj'), Int('mmm'), Opaque('ooo'), Text('ppp'), UUID('qqq')
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = 'bbb-222-bbb'
@@ -171,7 +171,7 @@ class XMLResponse(BaseSIOTestCase):
         }
 
         result = MyService._sio.get_output(data, DATA_FORMAT.XML)
-        self.assertEquals(result, '<response><aaa>aaa-111</aaa><bbb>bbb-222-bbb</bbb><ccc>True</ccc>' \
+        self.assertEqual(result, '<response><aaa>aaa-111</aaa><bbb>bbb-222-bbb</bbb><ccc>True</ccc>' \
             '<ddd></ddd><eee>1999-12-31</eee><fff>1988-01-29T11:22:33+00:00</fff>' \
             '<ggg>123.456</ggg><jjj>111.222</jjj><mmm>9090</mmm><ooo>ZZZ-ZZZ-ZZZ</ooo>' \
             '<ppp>mytext</ppp><qqq>d011d054db4b43209e247f4c217af673</qqq></response>')
@@ -184,7 +184,7 @@ class XMLResponse(BaseSIOTestCase):
             class SimpleIO:
                 output = Int('aaa'), 'bbb'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa'
         bbb = '222'

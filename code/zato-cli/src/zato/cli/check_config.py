@@ -8,6 +8,7 @@ Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 
 # Zato
 from zato.cli import ManageCommand
+from zato.common.util.open_ import open_r
 
 # ################################################################################################################################
 
@@ -26,7 +27,7 @@ class CheckConfig(ManageCommand):
         from zato.common.json_internal import loads
 
         repo_dir = repo_dir or join(self.config_dir, 'repo')
-        return loads(open(join(repo_dir, conf_name)).read())
+        return loads(open_r(join(repo_dir, conf_name)).read())
 
 # ################################################################################################################################
 
@@ -110,14 +111,16 @@ class CheckConfig(ManageCommand):
         # Zato
         from zato.common.kvdb.api import KVDB
 
-        # Python 2/3 compatibility
-        from future.utils import iteritems
-
-        kvdb_config = Bunch(dict(iteritems((conf[conf_key]))))
+        # Redis is not configured = we can return
+        kvdb_config = conf.get(conf_key) or {}
+        if not kvdb_config:
+            return
 
         # Redis is not enabled = we can return
         if not KVDB.is_config_enabled(kvdb_config):
             return
+
+        kvdb_config = Bunch(kvdb_config)
 
         kvdb = KVDB(kvdb_config, cm.decrypt)
         kvdb.init()
@@ -152,7 +155,7 @@ class CheckConfig(ManageCommand):
             # .. but raise an error only if the PID it points to belongs
             # to an already running component. Otherwise, it must be a stale pidfile
             # that we can safely delete.
-            pid = open(pidfile).read().strip()
+            pid = open_r(pidfile).read().strip()
             try:
                 if pid:
                     pid = int(pid)
@@ -291,7 +294,7 @@ class CheckConfig(ManageCommand):
         repo_dir = join(self.config_dir, 'repo')
 
         lba_conf = self.get_json_conf('lb-agent.conf')
-        lb_conf_string = open(join(repo_dir, 'zato.config')).read()
+        lb_conf_string = open_r(join(repo_dir, 'zato.config')).read()
 
         # Load-balancer's agent
         self.ensure_json_config_port_free('Load balancer\'s agent', None, lba_conf)
@@ -356,10 +359,7 @@ class CheckConfig(ManageCommand):
         server_conf = ConfigObj(server_conf_path, zato_secrets_conf=secrets_conf_path, zato_crypto_manager=cm, use_zato=True)
 
         fs_sql_config = self.get_sql_ini('sql.conf')
-
         self.check_sql_odb_server_scheduler(cm, server_conf, fs_sql_config)
-        self.on_server_check_kvdb(cm, server_conf, 'broker')
-
         self.ensure_no_pidfile('scheduler')
 
 # ################################################################################################################################

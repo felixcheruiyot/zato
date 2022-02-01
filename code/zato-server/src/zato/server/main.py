@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # Monkey-patching modules individually can be about 20% faster,
 # or, in absolute terms, instead of 275 ms it may take 220 ms.
@@ -51,17 +49,19 @@ import yaml
 # Zato
 from zato.common.api import SERVER_STARTUP, TRACE1, ZATO_CRYPTO_WELL_KNOWN_DATA
 from zato.common.crypto.api import ServerCryptoManager
+from zato.common.ext.configobj_ import ConfigObj
 from zato.common.ipaddress_ import get_preferred_ip
 from zato.common.kvdb.api import KVDB
 from zato.common.odb.api import ODBManager, PoolStore
 from zato.common.repo import RepoManager
+from zato.common.simpleio_ import get_sio_server_config
 from zato.common.util.api import absjoin, asbool, get_config, get_kvdb_config_for_log, parse_cmd_line_options, \
      register_diag_handlers, store_pidfile
 from zato.common.util.cli import read_stdin_data
-from zato.common.simpleio_ import get_sio_server_config
+from zato.common.util.platform_ import is_linux
+from zato.common.util.open_ import open_r
 from zato.server.base.parallel import ParallelServer
 from zato.server.ext import zunicorn
-from zato.common.ext.configobj_ import ConfigObj
 from zato.server.ext.zunicorn.app.base import Application
 from zato.server.service.store import ServiceStore
 from zato.server.startup_callable import StartupCallableTool
@@ -86,7 +86,8 @@ class ZatoGunicornApplication(Application):
     def init(self, *ignored_args, **ignored_kwargs):
         self.cfg.set('post_fork', self.zato_wsgi_app.post_fork) # Initializes a worker
         self.cfg.set('on_starting', self.zato_wsgi_app.on_starting) # Generates the deployment key
-        self.cfg.set('worker_exit', self.zato_wsgi_app.worker_exit) # Cleans up after the worker
+        self.cfg.set('before_pid_kill', self.zato_wsgi_app.before_pid_kill) # Cleans up before the worker exits
+        self.cfg.set('worker_exit', self.zato_wsgi_app.worker_exit) # Cleans up after the worker exits
 
         for k, v in self.config_main.items():
             if k.startswith('gunicorn') and v:
@@ -126,13 +127,15 @@ class ZatoGunicornApplication(Application):
 
 def run(base_dir, start_gunicorn_app=True, options=None):
     # type: (str, bool, dict)
+
     options = options or {}
 
     # Store a pidfile before doing anything else
     store_pidfile(base_dir)
 
     # For dumping stacktraces
-    register_diag_handlers()
+    if is_linux:
+        register_diag_handlers()
 
     # Capture warnings to log files
     logging.captureWarnings(True)
@@ -151,7 +154,7 @@ def run(base_dir, start_gunicorn_app=True, options=None):
     logging.addLevelName('TRACE1', TRACE1)
     logging_conf_path = os.path.join(repo_location, 'logging.conf')
 
-    with open(logging_conf_path) as f:
+    with open_r(logging_conf_path) as f:
         logging_config = yaml.load(f, yaml.FullLoader)
         dictConfig(logging_config)
 
@@ -162,6 +165,14 @@ def run(base_dir, start_gunicorn_app=True, options=None):
     secrets_config = ConfigObj(os.path.join(repo_location, 'secrets.conf'), use_zato=False)
     server_config = get_config(repo_location, 'server.conf', crypto_manager=crypto_manager, secrets_conf=secrets_config)
     pickup_config = get_config(repo_location, 'pickup.conf')
+
+    if server_config.main.get('debugger_enabled'):
+        import debugpy
+        debugger_host = server_config.main.debugger_host
+        debugger_port = server_config.main.debugger_port
+        logger.info('Debugger waiting for connections on %s:%s', debugger_host, debugger_port)
+        debugpy.listen((debugger_host, debugger_port))
+        debugpy.wait_for_client()
 
     sio_config = get_config(repo_location, 'simple-io.conf', needs_user_config=False)
     sio_config = get_sio_server_config(sio_config)
@@ -200,7 +211,7 @@ def run(base_dir, start_gunicorn_app=True, options=None):
 
     if not preferred_address and not server_config.server_to_server.boot_if_preferred_not_found:
         msg = 'Unable to start the server. Could not obtain a preferred address, please configure [bind_options] in server.conf'
-        logger.warn(msg)
+        logger.warning(msg)
         raise Exception(msg)
 
     # Create the startup callable tool as soon as practical
@@ -228,7 +239,6 @@ def run(base_dir, start_gunicorn_app=True, options=None):
     kvdb_config = get_kvdb_config_for_log(server_config.kvdb)
     kvdb_logger.info('Main process config `%s`', kvdb_config)
 
-    # New in 2.0 hence optional
     user_locale = server_config.misc.get('locale', None)
     if user_locale:
         locale.setlocale(locale.LC_ALL, user_locale)
@@ -288,7 +298,7 @@ def run(base_dir, start_gunicorn_app=True, options=None):
     server.startup_callable_tool = startup_callable_tool
     server.is_sso_enabled = server.fs_server_config.component_enabled.sso
     if server.is_sso_enabled:
-        server.sso_api = SSOAPI(server, sso_config, None, crypto_manager.encrypt, crypto_manager.decrypt,
+        server.sso_api = SSOAPI(server, sso_config, None, crypto_manager.encrypt, server.decrypt,
             crypto_manager.hash_secret, crypto_manager.verify_hash, new_user_id)
 
     # New in 2.0.8
@@ -369,7 +379,7 @@ if __name__ == '__main__':
         server_base_dir = env_server_base_dir
         cmd_line_options = {
             'fg':True,
-            'sync_internal':False,
+            'sync_internal':True,
             'secret_key':'',
             'stderr_path':None,
         }

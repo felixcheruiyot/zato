@@ -121,6 +121,7 @@ def validate_password(sso_conf, password):
     # Password may not contain most commonly used ones
     for elem in sso_conf.password.reject_list:
         if elem in password:
+            logger.warning('Password rejected because it contains a disallowed pattern from sso.conf -> password.reject_list')
             raise ValidationError(status_code.password.invalid, sso_conf.password.inform_if_invalid)
 
 # ################################################################################################################################
@@ -262,7 +263,7 @@ def normalize_sso_config(sso_conf):
 
 def check_remote_app_exists(current_app, apps_all, logger):
     if current_app not in apps_all:
-        logger.warn('Invalid current_app `%s`, not among `%s', current_app, apps_all)
+        logger.warning('Invalid current_app `%s`, not among `%s', current_app, apps_all)
         raise ValidationError(status_code.app_list.invalid)
     else:
         return True

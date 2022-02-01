@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -20,7 +18,7 @@ from logging.handlers import RotatingFileHandler
 from os import getppid, path
 from threading import RLock
 from traceback import format_exc
-from wsgiref.simple_server import make_server
+from wsgiref.simple_server import make_server as wsgiref_make_server
 
 # Bunch
 from bunch import bunchify
@@ -40,14 +38,17 @@ from zato.common.broker_message import code_to_name
 from zato.common.json_internal import dumps, loads
 from zato.common.util.api import parse_cmd_line_options
 from zato.common.util.auth import parse_basic_auth
+from zato.common.util.open_ import open_r, open_w
 from zato.common.util.posix_ipc_ import ConnectorConfigIPC
 
 # ################################################################################################################################
 
 if 0:
     from bunch import Bunch
+    from logging import Logger
 
     Bunch = Bunch
+    Logger = Logger
 
 # ################################################################################################################################
 
@@ -73,7 +74,8 @@ def get_logging_config(conn_type, file_name):
         },
         'formatters': {
             'default': {
-                'format': '%(asctime)s - %(levelname)s - %(process)d:%(threadName)s - %(name)s:%(lineno)d - %(message)s'}
+                'format': '%(asctime)s - %(levelname)s - %(process)d:%(threadName)s - %(name)s:%(lineno)d - %(message)s'
+            }
         }
     }
 
@@ -128,7 +130,7 @@ def ensure_prereqs_ready(func):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Response(object):
+class Response:
     def __init__(self, status=_http_200, data=b'', content_type='text/json'):
         self.status = status
         self.data = data
@@ -137,7 +139,7 @@ class Response(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class BaseConnectionContainer(object):
+class BaseConnectionContainer:
 
     # Subclasses may indicate that they have their specific prerequisites
     # that need to be fulfilled before connections can be used,
@@ -157,11 +159,22 @@ class BaseConnectionContainer(object):
 
     def __init__(self):
 
-        zato_options = sys.argv[1]
-        zato_options = parse_cmd_line_options(zato_options)
+        if len(sys.argv) > 1:
+            self.options = sys.argv[1]
+            self.options = parse_cmd_line_options(self.options) # type: dict
+            self.options['zato_subprocess_mode'] = True
+        else:
+            self.options = {
+                'zato_subprocess_mode': False,
+                'deployment_key': 'test',
+                'shmem_size': 100_000,
+            }
 
-        self.deployment_key = zato_options['deployment_key']
-        self.shmem_size = int(zato_options['shmem_size'])
+        # Subclasses may want to update the options here
+        self.enrich_options()
+
+        self.deployment_key = self.options['deployment_key']
+        self.shmem_size = int(self.options['shmem_size'])
 
         self.host = '127.0.0.1'
         self.port = None
@@ -172,13 +185,14 @@ class BaseConnectionContainer(object):
         self.server_port = None
         self.server_path = None
         self.server_address = 'http://127.0.0.1:{}{}'
-
         self.lock = RLock()
-        self.logger = None
+        self.logger = None # type: Logger
         self.parent_pid = getppid()
 
         self.config_ipc = ConnectorConfigIPC()
-        self.config_ipc.create(self.deployment_key, self.shmem_size, False)
+
+        if self.options['zato_subprocess_mode']:
+            self.config_ipc.create(self.deployment_key, self.shmem_size, False)
 
         self.connections = {}
         self.outconns = {}
@@ -189,13 +203,39 @@ class BaseConnectionContainer(object):
         self.outconn_name_to_id = {}   # Maps outgoing connection names to their IDs
 
         self.set_config()
+        self.post_init()
+
+# ################################################################################################################################
+
+    def enrich_options(self):
+        # type: (None) -> None
+        pass
+
+# ################################################################################################################################
+
+    def post_init(self):
+        """ Can be implemented by subclasses to further customise the container.
+        """
+
+# ################################################################################################################################
 
     def set_config(self):
         """ Sets self attributes, as configured in shmem by our parent process.
         """
-        config = self.config_ipc.get_config('zato-{}'.format(self.ipc_name))
+        if self.options['zato_subprocess_mode']:
+            config = self.config_ipc.get_config('zato-{}'.format(self.ipc_name))
+            config = loads(config)
+        else:
+            config = {
+                'username': 'zato.username',
+                'password': 'zato.password',
+                'port': 35035,
+                'server_port': 35036,
+                'server_path': '/zato/base-connection-container',
+                'base_dir': os.path.expanduser('~/env/qs-1'),
+                'needs_pidfile': False,
+            }
 
-        config = loads(config)
         config = bunchify(config)
 
         self.username = config.username
@@ -208,14 +248,21 @@ class BaseConnectionContainer(object):
         self.server_path = config.server_path
         self.server_address = self.server_address.format(self.server_port, self.server_path)
 
-        with open(config.logging_conf_path) as f:
-            logging_config = yaml.load(f, yaml.FullLoader)
+        if self.options['zato_subprocess_mode']:
+            with open_r(config.logging_conf_path) as f:
+                logging_config = yaml.load(f, yaml.FullLoader)
 
-        if not 'zato_{}'.format(self.conn_type) in logging_config['loggers']:
-            logging_config = get_logging_config(self.conn_type, self.logging_file_name)
+            if not 'zato_{}'.format(self.conn_type) in logging_config['loggers']:
+                logging_config = get_logging_config(self.conn_type, self.logging_file_name)
 
-        # Configure logging for this connector
-        self.set_up_logging(logging_config)
+            # Configure logging for this connector
+            self.set_up_logging(logging_config)
+
+        else:
+            log_format = '%(asctime)s - %(levelname)s - %(process)d:%(threadName)s - %(name)s:%(lineno)d - %(message)s'
+            logging.basicConfig(level=logging.DEBUG, format=log_format)
+            self.logger = getLogger('zato')
+            self.logger.warning('QQQ %s', self)
 
         # Store our process's pidfile
         if config.needs_pidfile:
@@ -260,7 +307,7 @@ class BaseConnectionContainer(object):
 
     def store_pidfile(self, suffix):
         pidfile = os.path.join(self.base_dir, '{}-{}'.format(MISC.PIDFILE, suffix))
-        with open(pidfile, 'w') as f:
+        with open_w(pidfile) as f:
             f.write(str(os.getpid()))
 
 # ################################################################################################################################
@@ -275,7 +322,7 @@ class BaseConnectionContainer(object):
         try:
             _post(self.server_address, data=dumps(msg), auth=self.server_auth)
         except Exception as e:
-            self.logger.warn('Exception in BaseConnectionContainer._post: `%s`', e.args[0])
+            self.logger.warning('Exception in BaseConnectionContainer._post: `%s`', e.args[0])
 
 # ################################################################################################################################
 
@@ -286,7 +333,7 @@ class BaseConnectionContainer(object):
             'queue_name': msg_ctx.queue_name,
             'service_name': msg_ctx.service_name,
             'data_format': msg_ctx.data_format,
-            })
+        })
 
 # ################################################################################################################################
 
@@ -360,7 +407,7 @@ class BaseConnectionContainer(object):
 
     def _on_send_exception(self):
         msg = 'Exception in _on_OUTGOING_SEND (2) `{}`'.format(format_exc())
-        self.logger.warn(msg)
+        self.logger.warning(msg)
         return Response(_http_503, msg)
 
 # ################################################################################################################################
@@ -392,11 +439,11 @@ class BaseConnectionContainer(object):
         username, password = parse_basic_auth(auth)
 
         if username != self.username:
-            self.logger.warn('Invalid username or password')
+            self.logger.warning('Invalid username or password')
             return
 
         elif password != self.password:
-            self.logger.warn('Invalid username or password')
+            self.logger.warning('Invalid username or password')
             return
         else:
             # All good, we let the request in
@@ -411,7 +458,7 @@ class BaseConnectionContainer(object):
         content_type = 'text/plain'
 
         try:
-            content_length = environ['CONTENT_LENGTH']
+            content_length = environ.get('CONTENT_LENGTH')
             if not content_length:
                 status = _http_400
                 data = 'Missing content'
@@ -429,7 +476,7 @@ class BaseConnectionContainer(object):
                     content_type = 'text/plain'
 
         except Exception:
-            self.logger.warn(format_exc())
+            self.logger.warning(format_exc())
             content_type = 'text/plain'
             status = _http_400
             data = format_exc()
@@ -446,7 +493,7 @@ class BaseConnectionContainer(object):
 
             except Exception:
                 exc_formatted = format_exc()
-                self.logger.warn('Exception in finally block `%s`', exc_formatted)
+                self.logger.warning('Exception in finally block `%s`', exc_formatted)
 
 # ################################################################################################################################
 
@@ -533,7 +580,7 @@ class BaseConnectionContainer(object):
                 conn.password = str(msg.password)
                 conn.connect()
             except Exception as e:
-                self.logger.warn(format_exc())
+                self.logger.warning(format_exc())
                 return Response(_http_503, str(e.args[0]), 'text/plain')
             else:
                 return Response()
@@ -557,12 +604,12 @@ class BaseConnectionContainer(object):
                 delete_name = conn.name
                 self.connections[def_id].close()
             except Exception:
-                self.logger.warn(format_exc())
+                self.logger.warning(format_exc())
             finally:
                 try:
                     del self.connections[def_id]
                 except Exception:
-                    self.logger.warn(format_exc())
+                    self.logger.warning(format_exc())
 
                 # .. continue to delete outconns regardless of errors above ..
                 for outconn_id, outconn_def_id in self.outconn_id_to_def_id.items():
@@ -624,7 +671,7 @@ class BaseConnectionContainer(object):
             try:
                 self._create_definition(msg)
             except Exception as e:
-                self.logger.warn(format_exc())
+                self.logger.warning(format_exc())
                 return Response(_http_503, str(e.args[0]))
             else:
                 return Response()
@@ -636,8 +683,13 @@ class BaseConnectionContainer(object):
 
 # ################################################################################################################################
 
+    def make_server(self):
+        return wsgiref_make_server(self.host, self.port, self.on_wsgi_request)
+
+# ################################################################################################################################
+
     def run(self):
-        server = make_server(self.host, self.port, self.on_wsgi_request)
+        server = self.make_server()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
@@ -649,7 +701,7 @@ class BaseConnectionContainer(object):
                     conn.close()
             except Exception:
                 # Log exception if cleanup was not possible
-                self.logger.warn('Exception in shutdown procedure `%s`', format_exc())
+                self.logger.warning('Exception in shutdown procedure `%s`', format_exc())
             finally:
                 # Anything happens, we need to shut down the process
                 os.kill(os.getpid(), signal.SIGTERM)

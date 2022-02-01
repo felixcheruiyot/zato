@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import base64
@@ -25,6 +23,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from builtins import bytes
 
 # Zato
+from zato.common.const import SECRETS
 from zato.common.crypto.const import well_known_data, zato_stdin_prefix
 from zato.common.ext.configobj_ import ConfigObj
 from zato.common.json_internal import loads
@@ -40,7 +39,7 @@ class SecretKeyError(Exception):
 
 # ################################################################################################################################
 
-class CryptoManager(object):
+class CryptoManager:
     """ Used for encryption and decryption of secrets.
     """
     def __init__(self, repo_dir=None, secret_key=None, stdin_data=None, well_known_data=None):
@@ -198,11 +197,15 @@ class CryptoManager(object):
 
 # ################################################################################################################################
 
-    def decrypt(self, encrypted):
+    def decrypt(self, encrypted, _prefix=SECRETS.PREFIX_BYTES):
         """ Returns input data in a clear-text, decrypted, form.
         """
         if not isinstance(encrypted, bytes):
             encrypted = encrypted.encode('utf8')
+
+        if encrypted.startswith(_prefix):
+            encrypted = encrypted.replace(_prefix, b'')
+
         return self.secret_key.decrypt(encrypted).decode('utf8')
 
 # ################################################################################################################################
@@ -260,7 +263,7 @@ class ServerCryptoManager(CryptoManager):
 
 # ################################################################################################################################
 
-class HashParamsComputer(object):
+class HashParamsComputer:
     """ Computes parameters for hashing purposes, e.g. number of rounds in PBKDF2.
     """
     def __init__(self, goal, header_func=None, progress_func=None, footer_func=None, scheme='pbkdf2_sha512', loops=10,

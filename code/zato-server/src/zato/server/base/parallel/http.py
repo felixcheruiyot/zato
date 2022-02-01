@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 # stdlib
 from datetime import datetime
-from http.client import INTERNAL_SERVER_ERROR, responses
 from logging import getLogger, INFO
 from traceback import format_exc
 
@@ -38,7 +35,7 @@ ACCESS_LOG_DT_FORMAT = '%d/%b/%Y:%H:%M:%S %z'
 
 # ################################################################################################################################
 
-class HTTPHandler(object):
+class HTTPHandler:
     """ Handles incoming HTTP requests.
     """
     def on_wsgi_request(self, wsgi_environ, start_response, _new_cid=new_cid, _local_zone=get_localzone(),
@@ -67,10 +64,9 @@ class HTTPHandler(object):
 
         # Any exception at this point must be a server-side error
         except Exception:
-            tb = format_exc()
-            wsgi_environ['zato.http.response.status'] = b'%s %s' % (bytes(INTERNAL_SERVER_ERROR), str(responses[INTERNAL_SERVER_ERROR]))
-            error_msg = b'`%s` Exception caught `%s`' % (cid, tb)
+            error_msg = '`%s` Exception caught `%s`' % (cid, format_exc())
             logger.error(error_msg)
+            wsgi_environ['zato.http.response.status'] = b'500 Internal Server Error'
             payload = error_msg if self.return_tracebacks else self.default_error_message
             raise
 
@@ -80,7 +76,7 @@ class HTTPHandler(object):
             # For access log
             channel_name = channel_item.get('name', '-')
         else:
-            # 404 because could not find the channel, or
+            # 404 because we could not find the channel, or
             # 405 because this was an invalid HTTP method
             channel_name = '-'
 

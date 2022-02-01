@@ -1,4 +1,5 @@
 .idea
+.vscode
 code/.installed.cfg
 code/\.vscode/
 code/bin/*
@@ -25,9 +26,11 @@ code/pyvenv.cfg
 code/release-info/initial-remote.txt
 code/release-info/last-update-commit.txt
 code/release-info/revision.txt
+code/Scripts/*
 code/sec-wall-trunk-src/*
 code/share/*
 code/tests/*
+code/windows-bin/zato.py
 code/zato-cy/src/zato/cy/*.c
 code/zato-cy/src/zato/cy/*.html
 code/zato-cy/src/zato/cy/*/*.c
@@ -35,15 +38,17 @@ code/zato-cy/src/zato/cy/*/*.html
 code/zato-hl7/src/zato/hl7/cy/*.c
 code/zato-hl7/src/zato/hl7/cy/*.html
 code/zato-web-admin/src/zato/admin/static/css/.sass-cache/
-code/zato_extra_paths/*
+code/zato_extra_paths*
 code/zato-exeagent
 code/*/build
 code/*/dist
+geckodriver.log
 hotfixes
 pidfile
 *.egg-info*
 *.geany*
 *.pyc
+*.pyd
 *.pyo
 *.so
 *.swp

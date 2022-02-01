@@ -15,10 +15,15 @@ import os
 import stat
 import tempfile
 from datetime import datetime, timedelta
-from fcntl import fcntl
 from io import StringIO
 from traceback import format_exc
 from uuid import uuid4
+
+try:
+    from fcntl import fcntl
+except ImportError:
+    # Ignore it under Windows
+    pass
 
 # gevent
 from gevent import sleep
@@ -50,7 +55,7 @@ _F_SETPIPE_SZ = 1031
 
 # ################################################################################################################################
 
-class IPCAPI(object):
+class IPCAPI:
     """ API through which IPC is performed.
     """
     def __init__(self, name=None, on_message_callback=None, pid=None):
@@ -177,7 +182,7 @@ class IPCAPI(object):
                         now = datetime.utcnow()
 
             except Exception:
-                logger.warn('Exception in IPC FIFO, e:`%s`', format_exc())
+                logger.warning('Exception in IPC FIFO, e:`%s`', format_exc())
 
             finally:
                 os.close(fifo_fd)
@@ -185,7 +190,7 @@ class IPCAPI(object):
             return is_success, response
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
         finally:
             os.remove(fifo_path)
 

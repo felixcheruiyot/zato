@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -25,11 +23,8 @@ from gevent import sleep
 from past.builtins import basestring
 
 # Zato
-from zato.broker import BrokerMessageReceiver
-from zato.broker.client import BrokerClient
-from zato.common.api import CHANNEL, DATA_FORMAT, SCHEDULER, ZATO_NONE
-from zato.common.broker_message import MESSAGE_TYPE, SCHEDULER as SCHEDULER_MSG, SERVICE, TOPICS
-from zato.common.kvdb.api import KVDB
+from zato.common.api import SCHEDULER, ZATO_NONE
+from zato.common.broker_message import SCHEDULER as SCHEDULER_MSG
 from zato.common.util.api import new_cid, spawn_greenlet
 from zato.scheduler.backend import Interval, Job, Scheduler as _Scheduler
 
@@ -42,13 +37,16 @@ _has_debug = logger.isEnabledFor(logging.DEBUG)
 
 def _start_date(job_data):
     if isinstance(job_data.start_date, basestring):
-        return parse_datetime(job_data.start_date)
+        # Remove timezone information as we assume that all times are in UTC
+        start_date = job_data.start_date.split('+')
+        start_date = start_date[0]
+        return parse_datetime(start_date)
     return job_data.start_date
 
 # ################################################################################################################################
 
-class Scheduler(BrokerMessageReceiver):
-    """ The Zato's job scheduler. All of the operations assume the data was already validated and sanitized
+class SchedulerAPI:
+    """ The job scheduler server. All of the operations assume the data was already validated
     by relevant Zato public API services.
     """
     def __init__(self, config=None, run=False):
@@ -56,17 +54,6 @@ class Scheduler(BrokerMessageReceiver):
         self.broker_client = None
         self.config.on_job_executed_cb = self.on_job_executed
         self.sched = _Scheduler(self.config, self)
-
-        # Broker connection
-        self.broker_conn = KVDB(config=self.config.main.broker, decrypt_func=self.config.crypto_manager.decrypt)
-        self.broker_conn.init()
-
-        # Broker client
-        self.broker_callbacks = {
-            TOPICS[MESSAGE_TYPE.TO_SCHEDULER]: self.on_broker_msg,
-        }
-
-        self.broker_client = BrokerClient(self.broker_conn, 'scheduler', self.broker_callbacks, [])
 
         if run:
             self.serve_forever()
@@ -78,13 +65,13 @@ class Scheduler(BrokerMessageReceiver):
             try:
                 spawn_greenlet(self.sched.run)
             except Exception:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
 
             while not self.sched.ready:
                 sleep(0.1)
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
 
 # ################################################################################################################################
 
@@ -110,7 +97,7 @@ class Scheduler(BrokerMessageReceiver):
         if extra_data_format != ZATO_NONE:
             msg['data_format'] = extra_data_format
 
-        self.broker_client.invoke_async(msg)
+        self.broker_client.invoke_async(msg, from_scheduler=True)
 
         if _has_debug:
             msg = 'Sent a job execution request, name [{}], service [{}], extra [{}]'.format(
@@ -120,14 +107,14 @@ class Scheduler(BrokerMessageReceiver):
         # Now, if it was a one-time job, it needs to be deactivated.
         if ctx['type'] == SCHEDULER.JOB_TYPE.ONE_TIME:
             msg = {
-                'action': SERVICE.PUBLISH.value,
-                'service': 'zato.scheduler.job.set-active-status',
-                'payload': {'id':ctx['id'], 'is_active':False},
+                'action': SCHEDULER_MSG.DELETE.value,
+                'service': 'zato.scheduler.job.delete',
+                'payload': {
+                    'id':ctx['id'],
+                },
                 'cid': new_cid(),
-                'channel': CHANNEL.SCHEDULER_AFTER_ONE_TIME,
-                'data_format': DATA_FORMAT.JSON,
             }
-            self.broker_client.publish(msg)
+            self.broker_client.publish(msg, from_scheduler=True)
 
 # ################################################################################################################################
 
@@ -238,7 +225,12 @@ class Scheduler(BrokerMessageReceiver):
     def delete(self, job_data, **kwargs):
         """ Deletes the job from the scheduler.
         """
-        self.sched.unschedule_by_name(job_data.old_name if job_data.get('old_name') else job_data.name, **kwargs)
+        old_name = job_data.get('old_name')
+        name = job_data.old_name if old_name else job_data.name
+
+        logger.info('Deleting job %s (old_name:%s)', name, old_name)
+
+        self.sched.unschedule_by_name(name, **kwargs)
 
 # ################################################################################################################################
 
@@ -278,9 +270,4 @@ class Scheduler(BrokerMessageReceiver):
         self.execute(msg)
 
 # ################################################################################################################################
-
-    def on_broker_msg_SCHEDULER_CLOSE(self, msg, *ignored_args):
-        self.broker_client.close()
-        self.stop()
-
 # ################################################################################################################################

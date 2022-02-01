@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from collections import namedtuple
@@ -72,8 +70,8 @@ def dict_match(haystack, needle):
 
 #: List of zato services we explicitly don't support.
 IGNORE_PREFIXES = {
-    "zato.kvdb.data-dict.dictionary",
-    "zato.kvdb.data-dict.translation",
+    'zato.kvdb.data-dict.dictionary',
+    'zato.kvdb.data-dict.translation',
 }
 
 def populate_services_from_apispec(client, logger):
@@ -96,7 +94,7 @@ def populate_services_from_apispec(client, logger):
 
     by_prefix = {}  # { "zato.apispec": {"get-api-spec": { .. } } }
 
-    for service in response.data['namespaces']['']['services']:
+    for service in response.data:
         prefix, _, name = service['name'].rpartition('.')
         methods = by_prefix.setdefault(prefix, {})
         methods[name] = service
@@ -186,7 +184,7 @@ def test_item(item, cond):
             return False
     return True
 
-class ServiceInfo(object):
+class ServiceInfo:
     def __init__(self, prefix=None, name=None, object_dependencies=None, service_dependencies=None, export_filter=None):
         assert name or prefix
 
@@ -235,8 +233,8 @@ class ServiceInfo(object):
         if method_sig is None:
             return set()
 
-        input_required = method_sig['simple_io']['zato']['input_required']
-        required = set(f['name'] for f in input_required)
+        input_required = method_sig.get('input_required', [])
+        required = {elem['name'] for elem in input_required}
         required.discard('cluster_id')
         return required
 
@@ -411,15 +409,15 @@ HTTP_SOAP_KINDS = (
     ('outconn_soap',        'outgoing',     'soap'),
     ('outconn_plain_http',  'outgoing',     'plain_http')
 )
-HTTP_SOAP_ITEM_TYPES = set(tup[0] for tup in HTTP_SOAP_KINDS)
+HTTP_SOAP_ITEM_TYPES = {tup[0] for tup in HTTP_SOAP_KINDS}
 
-class _DummyLink(object):
+class _DummyLink:
     """ Pip requires URLs to have a .url attribute.
     """
     def __init__(self, url):
         self.url = url
 
-class Notice(object):
+class Notice:
     def __init__(self, value_raw, value, code):
         self.value_raw = value_raw
         self.value = value
@@ -432,7 +430,7 @@ class Notice(object):
             self.__class__.__name__, hex(id(self)), self.value_raw,
             self.value, self.code)
 
-class Results(object):
+class Results:
     def __init__(self, warnings=None, errors=None, service=None):
 
         # List of Warning instances
@@ -463,7 +461,7 @@ class Results(object):
     def ok(self):
         return not (self.warnings or self.errors)
 
-class InputValidator(object):
+class InputValidator:
     def __init__(self, json):
         #: Validation result.
         self.results = Results()
@@ -501,7 +499,7 @@ class InputValidator(object):
                 raw = (req_key, required_keys, item_dict, item_type)
                 self.results.add_error(raw, ERROR_KEYS_MISSING, "Key '{}' must exist in {}: {}", req_key, item_type, item_dict)
 
-class DependencyScanner(object):
+class DependencyScanner:
     def __init__(self, json, ignore_missing=False):
         self.json = json
         self.ignore_missing = ignore_missing
@@ -546,7 +544,7 @@ class DependencyScanner(object):
 
             if dep_key not in item:
                 results.add_error(
-                    (dep_key, dep_info), ERROR_MISSING_DEP, "{} lacks required {} field: {}", item_type, dep_key, item)
+                    (dep_key, dep_info), ERROR_MISSING_DEP, '{} lacks required {} field: {}', item_type, dep_key, item)
 
             value = item.get(dep_key)
             if value != dep_info.get('empty_value'):
@@ -580,7 +578,7 @@ class DependencyScanner(object):
 
         return results
 
-class ObjectImporter(object):
+class ObjectImporter:
     def __init__(self, client, logger, object_mgr, json, ignore_missing, args):
         # type: (APIClient, Logger, ObjectManager, dict, bool, object)
 
@@ -623,9 +621,9 @@ class ObjectImporter(object):
             service_name = item.get(dep_field)
             raw = (service_name, item_dict, item_type)
             if not service_name:
-                self.results.add_error(raw, ERROR_SERVICE_NAME_MISSING, "No {} service key defined type {}: {}", dep_field, item_type, item_dict)
+                self.results.add_error(raw, ERROR_SERVICE_NAME_MISSING, 'No {} service key defined type {}: {}', dep_field, item_type, item_dict)
             elif service_name not in self.object_mgr.services:
-                self.results.add_error(raw, ERROR_SERVICE_MISSING, "Service '{}' from '{}' missing in ODB ({})", service_name, item_dict, item_type)
+                self.results.add_error(raw, ERROR_SERVICE_MISSING, 'Service `{}` from `{}` missing in ODB ({})', service_name, item_dict, item_type)
 
 # ################################################################################################################################
 
@@ -986,7 +984,7 @@ class ObjectImporter(object):
 
         return response
 
-class ObjectManager(object):
+class ObjectManager:
     def __init__(self, client, logger):
         self.client = client # type: APIClient
         self.logger = logger # type: Logger
@@ -1138,9 +1136,9 @@ class ObjectManager(object):
             'id': item.id,
         })
         if response.ok:
-            self.logger.info("Deleted {} ID {}".format(item_type, item.id))
+            self.logger.info('Deleted {} ID {}'.format(item_type, item.id))
         else:
-            self.logger.error("Could not delete {} ID {}: {}".format(item_type, item.id, response))
+            self.logger.error('Could not delete {} ID {}: {}'.format(item_type, item.id, response))
 
 # ################################################################################################################################
 
@@ -1244,7 +1242,7 @@ class ObjectManager(object):
             for item in items:
                 self.fix_up_odb_object(item_type, item)
 
-class JsonCodec(object):
+class JsonCodec:
     extension = '.json'
 
 # ################################################################################################################################
@@ -1265,7 +1263,7 @@ class JsonCodec(object):
 
         file_.write(dumps(object_, indent=1, sort_keys=True))
 
-class YamlCodec(object):
+class YamlCodec:
     extension = '.yml'
 
 # ################################################################################################################################
@@ -1286,7 +1284,7 @@ class YamlCodec(object):
 
         file_.write(pyaml.dump(object_, vspacing=True))
 
-class InputParser(object):
+class InputParser:
     def __init__(self, path, logger, codec):
 
         # stdlib
@@ -1344,7 +1342,7 @@ class InputParser(object):
         if not isinstance(obj, dict):
             raw = (abs_path, obj)
             results.add_error(raw, ERROR_INVALID_INPUT,
-                "Include {} is incorrect: expected a dictionary containing one item, or a fully formed dump file.")
+                'Include {} is incorrect: expected a dictionary containing one item, or a fully formed dump file.')
             return
 
         if 'name' in obj or 'id' in obj:
@@ -1414,7 +1412,7 @@ class InputParser(object):
         for item_type, items in iteritems(dict_):
             if item_type not in SERVICE_BY_NAME and item_type not in HTTP_SOAP_ITEM_TYPES:
                 raw = (item_type,)
-                results.add_error(raw, ERROR_UNKNOWN_ELEM, "Ignoring unknown element type {} in the input.", item_type)
+                results.add_error(raw, ERROR_UNKNOWN_ELEM, 'Ignoring unknown element type {} in the input.', item_type)
                 continue
 
             for item in items:
@@ -1528,7 +1526,7 @@ class Enmasse(ManageCommand):
         initial_wait_time = os.environ.get('ZATO_ENMASSE_INITIAL_WAIT_TIME')
         if initial_wait_time:
             initial_wait_time = int(initial_wait_time)
-            self.logger.warn('Sleeping for %s s', initial_wait_time)
+            self.logger.warning('Sleeping for %s s', initial_wait_time)
             sleep(initial_wait_time)
 
         self.object_mgr = ObjectManager(self.client, self.logger)

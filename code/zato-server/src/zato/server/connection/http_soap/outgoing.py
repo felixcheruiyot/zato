@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from copy import deepcopy
@@ -37,9 +35,16 @@ from past.builtins import basestring, unicode
 from zato.common.api import CONTENT_TYPE, DATA_FORMAT, SEC_DEF_TYPE, URL_TYPE
 from zato.common.exception import Inactive, TimeoutException
 from zato.common.json_internal import dumps, loads
+from zato.common.marshal_.api import Model
 from zato.common.util.api import get_component_name
 from zato.common.xml_ import soapenv11_namespace, soapenv12_namespace
 from zato.server.connection.queue import ConnectionQueue
+
+# ################################################################################################################################
+
+if 0:
+    from zato.server.base.parallel import ParallelServer
+    ParallelServer = ParallelServer
 
 # ################################################################################################################################
 
@@ -57,7 +62,7 @@ class HTTPSAdapter(requests.adapters.HTTPAdapter):
 
 # ################################################################################################################################
 
-class BaseHTTPSOAPWrapper(object):
+class BaseHTTPSOAPWrapper:
     """ Base class for HTTP/SOAP connection wrappers.
     """
     def __init__(self, config, _requests_session=None):
@@ -128,7 +133,7 @@ class BaseHTTPSOAPWrapper(object):
         verbose.close()
 
         if log_verbose:
-            func = logger.info if response.status_code == OK else logger.warn
+            func = logger.info if response.status_code == OK else logger.warning
             func(value)
 
         return response if return_response else value
@@ -203,8 +208,11 @@ class BaseHTTPSOAPWrapper(object):
 class HTTPSOAPWrapper(BaseHTTPSOAPWrapper):
     """ A thin wrapper around the API exposed by the 'requests' package.
     """
-    def __init__(self, config, requests_module=None):
+    def __init__(self, server, config, requests_module=None):
+        # type: (ParallelServer, dict, object) -> None
         super(HTTPSOAPWrapper, self).__init__(config, requests_module)
+
+        self.server = server
 
         self.soap = {}
         self.soap['1.1'] = {}
@@ -277,7 +285,7 @@ class HTTPSOAPWrapper(BaseHTTPSOAPWrapper):
         """
 
         if not params:
-            logger.warn('CID:`%s` No parameters given for URL path:`%r`', cid, self.config['address_url_path'])
+            logger.warning('CID:`%s` No parameters given for URL path:`%r`', cid, self.config['address_url_path'])
             raise ValueError('CID:`{}` No parameters given for URL path'.format(cid))
 
         path_params = {}
@@ -287,7 +295,7 @@ class HTTPSOAPWrapper(BaseHTTPSOAPWrapper):
 
             return (self.address.format(**path_params), dict(params))
         except(KeyError, ValueError):
-            logger.warn('CID:`%s` Could not build URL address `%r` path:`%r` with params:`%r`, e:`%s`',
+            logger.warning('CID:`%s` Could not build URL address `%r` path:`%r` with params:`%r`, e:`%s`',
                 cid, self.address, self.config['address_url_path'], params, format_exc())
 
             raise ValueError('CID:`{}` Could not build URL path'.format(cid))
@@ -342,12 +350,19 @@ class HTTPSOAPWrapper(BaseHTTPSOAPWrapper):
     def http_request(self, method, cid, data='', params=None, _has_debug=has_debug, *args, **kwargs):
         self._enforce_is_active()
 
+        # Pop it here for later use because we cannot pass it to the requests module
+        model = kwargs.pop('model', None)
+
         # We never touch strings/unicode because apparently the user already serialized outgoing data
         needs_request_serialize = not isinstance(data, basestring)
 
         if needs_request_serialize:
+
             if self.config['data_format'] == DATA_FORMAT.JSON:
+                if isinstance(data, Model):
+                    data = data.to_dict()
                 data = dumps(data)
+
             elif data and self.config['data_format'] == DATA_FORMAT.XML:
                 data = tostring(data)
 
@@ -382,6 +397,10 @@ class HTTPSOAPWrapper(BaseHTTPSOAPWrapper):
         elif self.config['data_format'] == DATA_FORMAT.XML:
             if response.text and response.headers.get('Content-Type') in ('application/xml', 'text/xml'):
                 response.data = fromstring(response.text)
+
+        # Support for SIO models loading
+        if model:
+            response.data = self.server.marshal_api.from_dict(None, response.data, model)
 
         return response
 
@@ -470,7 +489,7 @@ class SudsSOAPWrapper(BaseHTTPSOAPWrapper):
             self.client.put_client(client)
 
         except Exception:
-            logger.warn('Error while adding a SOAP client to `%s` (%s) e:`%s`', self.address, self.conn_type, format_exc())
+            logger.warning('Error while adding a SOAP client to `%s` (%s) e:`%s`', self.address, self.conn_type, format_exc())
 
     def build_client_queue(self):
 

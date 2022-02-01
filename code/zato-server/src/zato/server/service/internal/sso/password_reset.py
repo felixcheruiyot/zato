@@ -60,7 +60,7 @@ class PasswordReset(BaseRESTService):
             )
         except Exception:
             # Log the exception but do not return it
-            self.logger.warn('Exception in FlowPRT._handle_sso_POST `%s`', format_exc())
+            self.logger.warning('Exception in FlowPRT._handle_sso_POST `%s`', format_exc())
 
 # ################################################################################################################################
 
@@ -69,13 +69,16 @@ class PasswordReset(BaseRESTService):
         """
         # type: (SSOCtx) -> None
 
+        # This will be encrypted by SIO
+        ctx.input.token = self.server.decrypt(ctx.input.token)
+
         # Try to get a reset key for the input PRT ..
-        reset_key = self.sso.password_reset.access_token(
+        access_token_ctx = self.sso.password_reset.access_token(
             self.cid, ctx.input.token, ctx.input.current_app, ctx.remote_addr, ctx.user_agent)
 
         # .. if we are here, it means that the PRT was accepted
         # and we can return the reset key to the client.
-        self.response.payload.reset_key = reset_key
+        self.response.payload.reset_key = access_token_ctx.reset_key
 
 # ################################################################################################################################
 
@@ -83,6 +86,10 @@ class PasswordReset(BaseRESTService):
         """ Updates a password based on a PRT and reset key.
         """
         # type: (SSOCtx) -> None
+
+        # This will be encrypted by SIO
+        ctx.input.token = self.server.decrypt(ctx.input.token)
+        ctx.input.password = self.server.decrypt(ctx.input.password)
 
         # Try to get a reset key for the input PRT and reset key ..
         self.sso.password_reset.change_password(

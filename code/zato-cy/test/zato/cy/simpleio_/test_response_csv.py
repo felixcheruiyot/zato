@@ -34,7 +34,7 @@ class CSVResponse(BaseSIOTestCase):
                 output = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
                 csv_delimiter = ';'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -52,8 +52,8 @@ class CSVResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.CSV)
         lines = result.splitlines()
 
-        self.assertEquals(lines[0], 'aaa;bbb;ccc;ddd;eee')
-        self.assertEquals(lines[1], 'aaa-111;222;ccc-ccc-ccc;;eee-444')
+        self.assertEqual(lines[0], 'aaa;bbb;ccc;ddd;eee')
+        self.assertEqual(lines[1], 'aaa-111;222;ccc-ccc-ccc;;eee-444')
 
 # ################################################################################################################################
 
@@ -64,7 +64,7 @@ class CSVResponse(BaseSIOTestCase):
                 output = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
                 csv_delimiter = ':'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa1 = 'aaa-111-1'
         bbb1 = '2221'
@@ -85,9 +85,9 @@ class CSVResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.CSV)
         lines = result.splitlines()
 
-        self.assertEquals(lines[0], 'aaa:bbb:ccc:ddd:eee')
-        self.assertEquals(lines[1], 'aaa-111-1:2221:ccc-ccc-ccc-1::eee-444-1')
-        self.assertEquals(lines[2], 'aaa-111-2:2222:ccc-ccc-ccc-2::eee-444-2')
+        self.assertEqual(lines[0], 'aaa:bbb:ccc:ddd:eee')
+        self.assertEqual(lines[1], 'aaa-111-1:2221:ccc-ccc-ccc-1::eee-444-1')
+        self.assertEqual(lines[2], 'aaa-111-2:2222:ccc-ccc-ccc-2::eee-444-2')
 
 # ################################################################################################################################
 
@@ -98,7 +98,7 @@ class CSVResponse(BaseSIOTestCase):
                 output = 'aaa', AsIs('bbb'), Bool('ccc'), 'ddd', Date('eee'), DateTime('fff'), Decimal('ggg'), \
                     Float('jjj'), Int('mmm'), Opaque('ooo'), Text('ppp'), UUID('qqq')
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = 'bbb-222-bbb'
@@ -134,8 +134,8 @@ class CSVResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.CSV)
         lines = result.splitlines()
 
-        self.assertEquals(lines[0], 'aaa,bbb,ccc,ddd,eee,fff,ggg,jjj,mmm,ooo,ppp,qqq')
-        self.assertEquals(lines[1], 'aaa-111,bbb-222-bbb,True,,1999-12-31,1988-01-29T11:22:33+00:00,123.456,111.222,9090,' \
+        self.assertEqual(lines[0], 'aaa,bbb,ccc,ddd,eee,fff,ggg,jjj,mmm,ooo,ppp,qqq')
+        self.assertEqual(lines[1], 'aaa-111,bbb-222-bbb,True,,1999-12-31,1988-01-29T11:22:33+00:00,123.456,111.222,9090,' \
             'ZZZ-ZZZ-ZZZ,mytext,d011d054-db4b-4320-9e24-7f4c217af673')
 
 # ################################################################################################################################
@@ -146,7 +146,7 @@ class CSVResponse(BaseSIOTestCase):
             class SimpleIO:
                 output = Int('aaa'), 'bbb'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa'
         bbb = '222'

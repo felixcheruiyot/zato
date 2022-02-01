@@ -35,12 +35,12 @@ class Const:
 
     @staticmethod
     def all_units():
-        return set([Const.Unit.minute, Const.Unit.hour, Const.Unit.day])
+        return {Const.Unit.minute, Const.Unit.hour, Const.Unit.day}
 
 # ################################################################################################################################
 # ################################################################################################################################
 
-class ObjectInfo(object):
+class ObjectInfo:
     """ Information about an individual object covered by rate limiting.
     """
     __slots__ = 'type_', 'id', 'name'
@@ -53,7 +53,7 @@ class ObjectInfo(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class DefinitionItem(object):
+class DefinitionItem:
     __slots__ = 'config_line', 'from_', 'rate', 'unit', 'object_id', 'object_type', 'object_name'
 
     def __init__(self):

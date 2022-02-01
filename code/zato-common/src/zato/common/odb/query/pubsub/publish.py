@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from zato.common.api import PUBSUB
 from zato.common.exception import BadRequest
 from zato.common.odb.model import PubSubEndpoint, PubSubEndpointEnqueuedMessage, PubSubEndpointTopic, PubSubMessage, PubSubTopic
+from zato.common.pubsub import msg_pub_ignore
 from zato.common.util.sql import sql_op_with_deadlock_retry
 
 # ################################################################################################################################
@@ -43,9 +44,39 @@ _initialized=PUBSUB.DELIVERY_STATUS.INITIALIZED
 
 # ################################################################################################################################
 
+sub_only_keys = ('sub_pattern_matched', 'topic_name')
+
+# ################################################################################################################################
+
 def _sql_publish_with_retry(session, cid, cluster_id, topic_id, subscriptions_by_topic, gd_msg_list, now):
     """ A low-level implementation of sql_publish_with_retry.
     """
+
+    #
+    # We need to temporarily remove selected keys from gd_msg_list while we insert the topic
+    # messages only to bring back these keys later on when inserting the same messages for subscribers.
+    #
+    # The reason is that we want to avoid the "sqlalchemy.exc.CompileError: Unconsumed column names"
+    # condition which is met when insert_topic_messages attempts to use columns that are needed
+    # only by insert_queue_messages.
+    #
+    # An alternative to removing them temporarily would be to have two copies of the messages
+    # but that could be expensive as they would be otherwise 99% the same, differing only
+    # by these few, specific short keys.
+    #
+
+    # These message attributes are needed only by queue subscribers
+    sub_only = {}
+
+    # Go through each message and remove the keys that topics do not use
+    for msg in gd_msg_list: # type: dict
+
+        pub_msg_id = msg['pub_msg_id']
+        sub_attrs = sub_only.setdefault(pub_msg_id, {})
+
+        for name in sub_only_keys:
+            sub_attrs[name] = msg.pop(name)
+
     # Publish messages - INSERT rows, each representing an individual message
     topic_messages_inserted = insert_topic_messages(session, cid, gd_msg_list)
 
@@ -54,12 +85,21 @@ def _sql_publish_with_retry(session, cid, cluster_id, topic_id, subscriptions_by
         logger_zato.info('With topic_messages_inserted `%s` `%s` `%s` `%s` `%s` `%s` `%s`',
                 cid, topic_messages_inserted, cluster_id, topic_id, sub_keys_by_topic, gd_msg_list, now)
 
+    # If any messages were inserted ..
     if topic_messages_inserted:
 
-        # Move messages to each subscriber's queue
+        # .. move references to the messages to each subscriber's queue ..
         if subscriptions_by_topic:
 
             try:
+
+                # .. now, go through each message and add back the keys that topics did not use
+                # .. but queues are going to need.
+                for msg in gd_msg_list: # type: dict
+                    pub_msg_id = msg['pub_msg_id']
+                    for name in sub_only_keys:
+                        msg[name] = sub_only[pub_msg_id][name]
+
                 insert_queue_messages(session, cluster_id, subscriptions_by_topic, gd_msg_list, topic_id, now, cid)
 
                 if has_debug:
@@ -69,10 +109,8 @@ def _sql_publish_with_retry(session, cid, cluster_id, topic_id, subscriptions_by
                 # No integrity error / no deadlock = all good
                 return True
 
-            except IntegrityError:
-
-                if has_debug:
-                    logger_zato.info('Caught IntegrityError (_sql_publish_with_retry) `%s` `%s`', cid, format_exc())
+            except IntegrityError as e:
+                logger_zato.warn('Caught IntegrityError (_sql_publish_with_retry) `%s` `%s`', e, cid)
 
                 # If we have an integrity error here it means that our transaction, the whole of it,
                 # was rolled back - this will happen on MySQL in case in case of deadlocks which may
@@ -110,9 +148,14 @@ def sql_publish_with_retry(*args):
 
 # ################################################################################################################################
 
-def _insert_topic_messages(session, msg_list):
+def _insert_topic_messages(session, msg_list, msg_pub_ignore=msg_pub_ignore):
     """ A low-level implementation for insert_topic_messages.
     """
+    # Delete keys that cannot be inserted in SQL
+    for msg in msg_list: # type: dict
+        for name in msg_pub_ignore:
+            msg.pop(name, None)
+
     session.execute(MsgInsert().values(msg_list))
 
 # ################################################################################################################################
@@ -154,7 +197,6 @@ def insert_queue_messages(session, cluster_id, subscriptions_by_topic, msg_list,
 
     for sub in subscriptions_by_topic:
         for msg in msg_list:
-
             # Enqueues the message for each subscriber
             queue_msgs.append({
                 'creation_time': _float_str.format(now),

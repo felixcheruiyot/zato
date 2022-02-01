@@ -63,7 +63,7 @@ sub_impl_input_optional.remove('topic_name')
 
 # ################################################################################################################################
 
-class SubCtx(object):
+class SubCtx:
     """ A container for information pertaining to a given subscription request.
     """
     def __init__(self, cluster_id, pubsub):
@@ -276,7 +276,7 @@ class SubscribeServiceImpl(_Subscribe):
     endpoint_type = None
 
     class SimpleIO(AdminSIO):
-        input_required = 'topic_name', 'is_internal'
+        input_required = 'topic_name'
         input_optional = drop_sio_elems(common_sub_data, 'is_internal', 'topic_name')
         output_optional = 'sub_key', 'queue_depth'
         default_value = None
@@ -337,22 +337,20 @@ class SubscribeServiceImpl(_Subscribe):
         """
         with self.lock('zato.pubsub.subscribe.%s' % (ctx.topic_name)):
 
+            # Is it a WebSockets client?
+            is_wsx = bool(ctx.ws_channel_id)
+
             # Endpoint on whose behalf the subscription will be made
             endpoint = self.pubsub.get_endpoint_by_id(ctx.endpoint_id)
 
             with closing(self.odb.session()) as session:
-
                 with session.no_autoflush:
 
                     # Non-WebSocket clients cannot subscribe to the same topic multiple times
-                    if not ctx.ws_channel_id:
-
+                    if not is_wsx:
                         if has_subscription(session, ctx.cluster_id, ctx.topic.id, ctx.endpoint_id):
                             raise PubSubSubscriptionExists(self.cid, 'Endpoint `{}` is already subscribed to topic `{}`'.format(
                                 endpoint.name, ctx.topic.name))
-
-                    # Is it a WebSockets client?
-                    is_wsx = bool(ctx.ws_channel_id)
 
                     ctx.creation_time = now = utcnow_as_ms()
                     sub_key = new_sub_key(self.endpoint_type, ctx.ext_client_id)
@@ -542,7 +540,7 @@ class Create(_Subscribe):
                     # but for the time being, this is fine.
                     self.request.raw_request['sub_pattern_matched'] = self._is_subscription_allowed(topic_name, *check_input)
                 except Forbidden:
-                    self.logger.warn('Could not subscribe to `%r` using `%r`', topic_name, check_input)
+                    self.logger.warning('Could not subscribe to `%r` using `%r`', topic_name, check_input)
                     raise
 
             sub_service = 'zato.pubsub.subscription.subscribe-{}'.format(self.request.raw_request['endpoint_type'])
@@ -626,7 +624,7 @@ class CreateWSXSubscription(AdminService):
         try:
             self.pubsub.get_endpoint_id_by_ws_channel_id(ws_channel_id)
         except KeyError:
-            self.logger.warn('There is no endpoint for WSX channel ID `%s`', ws_channel_id)
+            self.logger.warning('There is no endpoint for WSX channel ID `%s`', ws_channel_id)
             raise Forbidden(self.cid)
 
         # Either an exact topic name or a list thereof is needed ..

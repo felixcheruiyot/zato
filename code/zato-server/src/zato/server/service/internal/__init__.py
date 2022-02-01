@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -36,7 +34,7 @@ success = '<error_code>{}</error_code>'.format(success_code)
 
 # ################################################################################################################################
 
-class SearchTool(object):
+class SearchTool:
     """ Optionally attached to each internal service returning a list of results responsible for extraction
     and serialization of search criteria.
     """
@@ -54,12 +52,12 @@ class SearchTool(object):
 
 # ################################################################################################################################
 
-class AdminSIO(object):
+class AdminSIO:
     namespace = zato_namespace
 
 # ################################################################################################################################
 
-class GetListAdminSIO(object):
+class GetListAdminSIO:
     namespace = zato_namespace
     input_optional = (Int('cur_page'), Bool('paginate'), 'query')
 
@@ -215,6 +213,7 @@ class ChangePasswordBase(AdminService):
         *args, **kwargs):
 
         instance_id = instance_id or self.request.input.id
+        instance_name = self.request.input.name
 
         with closing(self.odb.session()) as session:
             password1 = self.request.input.get('password1', '')
@@ -234,9 +233,27 @@ class ChangePasswordBase(AdminService):
                 if password1_decrypted != password2_decrypted:
                     raise Exception('Passwords need to be the same')
 
-                instance = session.query(class_).\
-                    filter(class_.id==instance_id).\
-                    one()
+                # Construct a basic query ..
+                query = session.query(class_)
+
+                # .. look up by ID if it is given ..
+                if instance_id:
+                    query = query.filter(class_.id==instance_id)
+
+                # .. try to use the name if ID is not available ..
+                elif instance_name:
+                    query = query.filter(class_.name==instance_name)
+
+                # .. otherwise, we do not know how to find the instance -> raise an exception.
+                else:
+                    raise Exception('Either ID or name are required on input')
+
+                # If we are here, it means that we can find the instance.
+                instance = query.first()
+
+                if not instance:
+                    raise Exception('Could not find instance with id:`{}` and name:`{}` ({})'.format(
+                        instance_id, instance_name, class_))
 
                 auth_func(instance, password1)
 
@@ -258,7 +275,7 @@ class ChangePasswordBase(AdminService):
                     for attr in kwargs.get('publish_instance_attrs', []):
                         self.request.input[attr] = getattr(instance, attr, ZATO_NONE)
 
-                    self.broker_client.publish(self.request.input, msg_type=msg_type)
+                    self.broker_client.publish(self.request.input)
 
             except Exception:
                 self.logger.error('Could not update password, e:`%s`', format_exc())

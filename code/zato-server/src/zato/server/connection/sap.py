@@ -38,7 +38,7 @@ class SAPWrapper(Wrapper):
 
         config.auth_url = 'rfc://{user}@{host}:{sysnr}/{client}'.format(**config)
         super(SAPWrapper, self).__init__(config, 'SAP', server)
-        self.logger.info("config: %r", config)
+        self.logger.info('config: %r', config)
 
     def add_client(self):
         # Decrypt the password if it is encrypted.
@@ -50,7 +50,7 @@ class SAPWrapper(Wrapper):
         try:
             ping_sap(conn)
         except Exception:
-            self.logger.warn('Could not ping SAP (%s), e:`%s`', self.config.name, format_exc())
+            self.logger.warning('Could not ping SAP (%s), e:`%s`', self.config.name, format_exc())
 
         self.client.put_client(conn)
 

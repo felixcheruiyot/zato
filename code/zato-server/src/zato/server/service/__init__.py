@@ -8,13 +8,21 @@ Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 
 # stdlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.client import BAD_REQUEST, METHOD_NOT_ALLOWED
+from inspect import isclass
 from traceback import format_exc
 from typing import Optional as optional
 
+# Arrow
+from arrow import Arrow
+
 # Bunch
 from bunch import bunchify
+
+# datetutil
+from dateutil.parser import parse as dt_parse
+from dateutil.tz.tz import tzutc
 
 # lxml
 from lxml.etree import _Element as EtreeElement
@@ -25,29 +33,27 @@ from gevent import Timeout, spawn
 from gevent.lock import RLock
 
 # Python 2/3 compatibility
-from past.builtins import basestring
 from future.utils import iterkeys
 from zato.common.py23_ import maxint
 
 # Zato
 from zato.bunch import Bunch
-from zato.common.api import BROKER, CHANNEL, DATA_FORMAT, HL7, KVDB, NO_DEFAULT_VALUE, PARAMS_PRIORITY, PUBSUB, \
+from zato.common.api import BROKER, CHANNEL, DATA_FORMAT, HL7, KVDB, NO_DEFAULT_VALUE, PARAMS_PRIORITY, PUBSUB, SCHEDULER, \
      WEB_SOCKET, zato_no_op_marker
 from zato.common.broker_message import CHANNEL as BROKER_MSG_CHANNEL
 from zato.common.exception import Inactive, Reportable, ZatoException
-from zato.common.ext.dataclasses import dataclass
 from zato.common.json_internal import dumps
 from zato.common.json_schema import ValidationException as JSONSchemaValidationException
 from zato.common.nav import DictNav, ListNav
+from zato.common.typing_ import anydict
 from zato.common.util.api import get_response_value, make_repr, new_cid, payload_from_request, service_name_from_impl, \
      spawn_greenlet, uncamelify
-from zato.server.connection import slow_response
+from zato.server.commands import CommandsFacade
 from zato.server.connection.email import EMailAPI
 from zato.server.connection.jms_wmq.outgoing import WMQFacade
 from zato.server.connection.search import SearchAPI
 from zato.server.connection.sms import SMSAPI
 from zato.server.connection.zmq_.outgoing import ZMQFacade
-from zato.server.message import MessageFacade
 from zato.server.pattern.api import FanOut
 from zato.server.pattern.api import InvokeRetry
 from zato.server.pattern.api import ParallelExec
@@ -60,6 +66,8 @@ from zato.cy.reqresp.payload import SimpleIOPayload
 from zato.cy.reqresp.response import Response
 
 # Not used here in this module but it's convenient for callers to be able to import everything from a single namespace
+from zato.common.ext.dataclasses import dataclass
+from zato.common.marshal_.api import Model, ModelCtx
 from zato.simpleio import AsIs, CSV, Bool, Date, DateTime, Dict, Decimal, DictList, Elem as SIOElem, Float, Int, List, \
      Opaque, Text, UTC, UUID
 
@@ -67,6 +75,7 @@ from zato.simpleio import AsIs, CSV, Bool, Date, DateTime, Dict, Decimal, DictLi
 AsIs = AsIs
 CSV = CSV
 Bool = Bool
+dataclass = dataclass
 Date = Date
 DateTime = DateTime
 Decimal = Decimal
@@ -76,6 +85,8 @@ DictList = DictList
 Float = Float
 Int = Int
 List = List
+Model = Model
+ModelCtx = ModelCtx
 Opaque = Opaque
 Text = Text
 UTC = UTC
@@ -84,33 +95,27 @@ UUID = UUID
 # ################################################################################################################################
 
 if 0:
-
-    # stdlib
-    from datetime import timedelta
     from typing import Callable
-
-    # Zato
-    from zato.broker.client import BrokerClient, BrokerClientAPI
+    from zato.broker.client import BrokerClient
     from zato.common.audit import AuditPII
     from zato.common.crypto.api import ServerCryptoManager
     from zato.common.json_schema import Validator as JSONSchemaValidator
+    from zato.common.kvdb.api import KVDB as KVDBAPI
     from zato.common.odb.api import ODBManager
+    from zato.common.typing_ import any_
+    from zato.common.util.time_ import TimeUtil
+    from zato.distlock import LockManager
     from zato.server.connection.ftp import FTPStore
     from zato.server.base.worker import WorkerStore
     from zato.server.base.parallel import ParallelServer
     from zato.server.config import ConfigDict, ConfigStore
     from zato.server.connection.cassandra import CassandraAPI
-    from zato.server.message import JSONPointerStore, NamespaceStore, XPathStore
     from zato.server.query import CassandraQueryAPI
     from zato.sso.api import SSOAPI
-
-    # Zato - Cython
     from zato.simpleio import CySimpleIO
 
-    # For pyflakes
     AuditPII = AuditPII
     BrokerClient = BrokerClient
-    BrokerClientAPI = BrokerClientAPI
     Callable = Callable
     CassandraAPI = CassandraAPI
     CassandraQueryAPI = CassandraQueryAPI
@@ -118,16 +123,15 @@ if 0:
     ConfigStore = ConfigStore
     CySimpleIO = CySimpleIO
     FTPStore = FTPStore
-    JSONPointerStore = JSONPointerStore
     JSONSchemaValidator = JSONSchemaValidator
-    NamespaceStore = NamespaceStore
+    KVDBAPI = KVDBAPI
     ODBManager = ODBManager
     ParallelServer = ParallelServer
     ServerCryptoManager = ServerCryptoManager
     SSOAPI = SSOAPI
     timedelta = timedelta
+    TimeUtil = TimeUtil
     WorkerStore = WorkerStore
-    XPathStore = XPathStore
 
 # ################################################################################################################################
 
@@ -162,7 +166,8 @@ _wsgi_channels = (CHANNEL.HTTP_SOAP, CHANNEL.INVOKE, CHANNEL.INVOKE_ASYNC)
 
 # ################################################################################################################################
 
-_response_raw_types=(basestring, dict, list, tuple, EtreeElement, ObjectifiedElement)
+_response_raw_types=(bytes, str, dict, list, tuple, EtreeElement, Model, ObjectifiedElement)
+_utz_utc = timezone.utc
 
 # ################################################################################################################################
 
@@ -203,7 +208,7 @@ class AsyncCtx:
 
 # ################################################################################################################################
 
-class ChannelInfo(object):
+class ChannelInfo:
     """ Conveys information abouts the channel that a service is invoked through.
     Available in services as self.channel or self.chan.
     """
@@ -225,7 +230,7 @@ class ChannelInfo(object):
 
 # ################################################################################################################################
 
-class ChannelSecurityInfo(object):
+class ChannelSecurityInfo:
     """ Contains information about a security definition assigned to a channel, if any.
     Available in services as:
 
@@ -261,7 +266,7 @@ class ChannelSecurityInfo(object):
 
 # ################################################################################################################################
 
-class _WSXChannel(object):
+class _WSXChannel:
     """ Provides communication with WebSocket channels.
     """
     def __init__(self, server, channel_name):
@@ -286,7 +291,7 @@ class _WSXChannel(object):
 
 # ################################################################################################################################
 
-class _WSXChannelContainer(object):
+class _WSXChannelContainer:
     """ A thin wrapper to mediate access to WebSocket channels.
     """
     def __init__(self, server):
@@ -319,19 +324,19 @@ class _WSXChannelContainer(object):
 
 # ################################################################################################################################
 
-class WSXFacade(object):
+class WSXFacade:
     """ An object via which WebSocket channels and outgoing connections may be invoked or send broadcasts to.
     """
     __slots__ = 'server', 'channel', 'out'
 
     def __init__(self, server):
-        # type: (ParallelServer)
+        # type: (ParallelServer) -> None
         self.server = server
         self.channel = _WSXChannelContainer(self.server)
 
 # ################################################################################################################################
 
-class AMQPFacade(object):
+class AMQPFacade:
     """ Introduced solely to let service access outgoing connections through self.amqp.invoke/_async
     rather than self.out.amqp_invoke/_async. The .send method is kept for pre-3.0 backward-compatibility.
     """
@@ -339,24 +344,107 @@ class AMQPFacade(object):
 
 # ################################################################################################################################
 
-class PatternsFacade(object):
+class PatternsFacade:
     """ The API through which services make use of integration patterns.
     """
     __slots__ = ('invoke_retry', 'fanout', 'parallel')
 
     def __init__(self, invoking_service, cache, lock):
-        # type: (Service) -> None
+        # type: (Service, dict, RLock) -> None
         self.invoke_retry = InvokeRetry(invoking_service)
         self.fanout = FanOut(invoking_service, cache, lock)
         self.parallel = ParallelExec(invoking_service, cache, lock)
 
+################################################################################################################################
+
+class SchedulerFacade:
+    """ The API through which jobs can be scheduled.
+    """
+    def __init__(self, server):
+        # type: (ParallelServer) -> None
+        self.server = server
+
+    def onetime(
+        self,
+        invoking_service, # type: Service
+        target_service,   # type: type[Service]
+        name='',          # type: str
+        *,
+        prefix='',        # type: str
+        start_date='',    # type: str
+        after_seconds=0,  # type: int
+        after_minutes=0,  # type: int
+        data=''           # type: any_
+        ) -> 'int':
+        """ Schedules a service to run at a specific date and time or aftern N minutes or seconds.
+        """
+
+        # This is reusable
+        now = self.server.time_util.utcnow(needs_format=False)
+
+        # We are given a start date on input ..
+        if start_date:
+            if not isinstance(start_date, datetime):
+
+                # This gives us a datetime object but we need to ensure
+                # that it is in UTC because this what the scheduler expects.
+                start_date = dt_parse(start_date)
+
+                if not isinstance(start_date.tzinfo, tzutc):
+                    _as_arrow = Arrow.fromdatetime(start_date)
+                    start_date = _as_arrow.to(_utz_utc)
+
+        # .. or we need to compute one ourselves.
+        else:
+            start_date = now + timedelta(seconds=after_seconds, minutes=after_minutes)
+
+        # This is the service that is scheduling a job ..
+        invoking_name = invoking_service.get_name()
+
+        # .. and this is the service that is being scheduled.
+        target_name   = target_service if isinstance(target_service, str) else target_service.get_name()
+
+        # Construct a name for the job
+        name = name or '{}{} -> {} {} {}'.format(
+            '{} '.format(prefix) if prefix else '',
+            invoking_name,
+            target_name,
+            now.isoformat(),
+            invoking_service.cid,
+        )
+
+        # This is what the service being invoked will receive on input
+        if data:
+            data = dumps({
+                SCHEDULER.EmbeddedIndicator: True,
+                'data': data
+            })
+
+        # Now, we are ready to create a new job ..
+        response = self.server.invoke(
+            'zato.scheduler.job.create', {
+                'cluster_id': self.server.cluster_id,
+                'name': name,
+                'is_active': True,
+                'job_type': SCHEDULER.JOB_TYPE.ONE_TIME,
+                'service': target_name,
+                'start_date': start_date,
+                'extra': data
+            }
+        )
+
+        # .. and return its ID to the caller.
+        return response['id'] # type: ignore
+
 # ################################################################################################################################
 
-class Service(object):
+class Service:
     """ A base class for all services deployed on Zato servers, no matter
     the transport and protocol, be it plain HTTP, SOAP, IBM MQ or any other,
     regardless whether they're built-in or user-defined ones.
     """
+    schedule: SchedulerFacade
+
     call_hooks = True
     _filter_by = None
     _enforce_service_invokes = None
@@ -375,19 +463,20 @@ class Service(object):
     email = None  # type: EMailAPI
     search = None # type: SearchAPI
     amqp = AMQPFacade()
+    commands = CommandsFacade()
 
     # For WebSockets
     wsx = None # type: WSXFacade
 
+    _msg_ns_store = None
+    _json_pointer_store = None
+    _xpath_store = None
+
     _worker_store = None  # type: WorkerStore
     _worker_config = None # type: ConfigStore
-    _msg_ns_store = None  # type: NamespaceStore
-    _json_pointer_store = None # type: JSONPointerStore
-    _xpath_store = None   # type: XPathStore
     _out_ftp = None       # type: FTPStore
     _out_plain_http = None # type: ConfigDict
 
-    _req_resp_freq = 0
     _has_before_job_hooks = None # type: bool
     _has_after_job_hooks = None  # type: bool
     _before_job_hooks = []
@@ -421,20 +510,19 @@ class Service(object):
         self.impl_name = self.__class__.__service_impl_name # Ditto
         self.logger = _get_logger(self.name)
         self.server = None        # type: ParallelServer
-        self.broker_client = None # type: BrokerClientAPI
+        self.broker_client = None # type: BrokerClient
         self.channel = None # type: ChannelInfo
         self.chan = self.channel
         self.cid = None          # type: str
         self.in_reply_to = None  # type: str
         self.data_format = None  # type: str
         self.transport = None    # type: str
-        self.wsgi_environ = None # type: dict
+        self.wsgi_environ = None # type: anydict
         self.job_type = None     # type: str
         self.environ = _Bunch()
-        self.request = _Request(self.logger)
+        self.request = _Request(self)
         self.response = _Response(self.logger)
-        self.msg = None
-        self.time = None
+        self.time = None # type: TimeUtil
         self.patterns = None
         self.user_config = None
         self.dictnav = _DictNav
@@ -476,6 +564,7 @@ class Service(object):
             self._worker_store.outconn_mongodb,
             self._worker_store.def_kafka,
             HL7API(self._worker_store.outconn_hl7_mllp) if self.component_enabled_hl7 else None,
+            self.kvdb
         )
 
 # ################################################################################################################################
@@ -487,7 +576,7 @@ class Service(object):
 # ################################################################################################################################
 
     @classmethod
-    def get_name(class_):
+    def get_name(class_) -> 'str':
         """ Returns a service's name, settings its .name attribute along. This will
         be called once while the service is being deployed.
         """
@@ -533,7 +622,7 @@ class Service(object):
             if name.startswith('handle_'):
 
                 if not getattr(class_, 'http_method_handlers', False):
-                    setattr(class_, 'http_method_handlers', {})
+                    class_.http_method_handlers = {}
 
                 method = name.replace('handle_', '')
                 class_.http_method_handlers[method] = getattr(class_, name)
@@ -564,10 +653,6 @@ class Service(object):
             if not Service.search:
                 Service.search = SearchAPI(self._worker_store.search_es_api, self._worker_store.search_solr_api)
 
-        if self.component_enabled_msg_path:
-            self.msg = MessageFacade(
-                self._json_pointer_store, self._xpath_store, self._msg_ns_store, self.request.payload, self.time)
-
         if self.component_enabled_patterns:
             self.patterns = PatternsFacade(self, self.server.internal_cache_patterns, self.server.internal_cache_lock_patterns)
 
@@ -576,8 +661,7 @@ class Service(object):
 
         # self.has_sio attribute is set by ServiceStore during deployment
         if self.has_sio:
-            self.request.init(True, self.cid, self._sio, self.data_format, self.transport, self.wsgi_environ,
-                self.server.encrypt)
+            self.request.init(True, self.cid, self._sio, self.data_format, self.transport, self.wsgi_environ, self.server.encrypt)
             self.response.init(self.cid, self._sio, self.data_format)
 
         # Cache is always enabled
@@ -712,7 +796,8 @@ class Service(object):
                         self.wsgi_environ['zato.http.remote_addr'])
 
                 if service.server.component_enabled.stats:
-                    service.usage = service.kvdb.conn.incr('{}{}'.format(KVDB.SERVICE_USAGE, service.name))
+                    service.server.current_usage.incr(service.name)
+
                 service.invocation_time = _utcnow()
 
                 # Check if there is a JSON Schema validator attached to the service and if so,
@@ -812,6 +897,7 @@ class Service(object):
             response.status_code = BAD_REQUEST
 
         if kwargs.get('skip_response_elem') and hasattr(response, 'keys'):
+
             keys = list(iterkeys(response))
             try:
                 keys.remove('_meta')
@@ -819,8 +905,20 @@ class Service(object):
                 # This is fine, there was only the actual response element here,
                 # without the '_meta' pagination
                 pass
-            response_elem = keys[0]
-            return response[response_elem]
+
+            # It is possible that the dictionary is empty
+            response_elem = keys[0] if keys else None
+
+            # This covers responses that have only one top-level element
+            # and that element's name is 'response' or, e.g. 'zato_amqp_...'
+            if len(keys) == 1 and (response_elem == 'response' or response_elem.startswith('zato')):
+                return response[response_elem]
+
+            # .. otherwise, this could be a dictionary of elements other than the above
+            # so we just return the dict as it is.
+            else:
+                return response
+
         else:
             return response
 
@@ -867,7 +965,7 @@ class Service(object):
                 return g.get(block=True, timeout=timeout)
             except Timeout:
                 g.kill()
-                logger.warn('Service `%s` timed out (%s)', service.name, self.cid)
+                logger.warning('Service `%s` timed out (%s)', service.name, self.cid)
                 if raise_timeout:
                     raise
         else:
@@ -878,6 +976,11 @@ class Service(object):
     def invoke(self, name, *args, **kwargs):
         """ Invokes a service synchronously by its name.
         """
+        # The 'name' parameter is actually a service class,
+        # not its name, and we need to extract the name ourselves.
+        if isclass(name) and issubclass(name, Service): # type: Service
+            name = name.get_name()
+
         if self.component_enabled_target_matcher:
             name, target = self.extract_target(name)
             kwargs['target'] = target
@@ -885,7 +988,7 @@ class Service(object):
         if self._enforce_service_invokes and self.invokes:
             if name not in self.invokes:
                 msg = 'Could not invoke `{}` which is not in `{}`'.format(name, self.invokes)
-                self.logger.warn(msg)
+                self.logger.warning(msg)
                 raise ValueError(msg)
 
         return self.invoke_by_impl_name(self.server.service_store.name_to_impl_name[name], *args, **kwargs)
@@ -997,75 +1100,25 @@ class Service(object):
 
         if self.server.component_enabled.stats:
 
+            # Time spent in this service, as a float rounding to the fifth digit
             proc_time = self.processing_time_raw.total_seconds() * 1000.0
-            proc_time = proc_time if proc_time > 1 else 0
+            proc_time = round(proc_time, 5)
 
-            self.processing_time = int(round(proc_time))
+            self.processing_time = proc_time
 
-            with self.kvdb.conn.pipeline() as pipe:
+            # Store usage statistics in the time series database ..
+            self.server.stats_client.push(
+                self.cid,
+                self.invocation_time.isoformat(),
+                self.name,
+                False,
+                self.processing_time
+            )
 
-                pipe.hset('%s%s' % (_service_time_basic, self.name), 'last', self.processing_time)
-                pipe.rpush('%s%s' % (_service_time_raw, self.name), self.processing_time)
+            # .. as well as in the in-RAM key keep track of the last duration times.
+            self.server.current_usage.set_last_duration(self.name, self.processing_time)
 
-                key = '%s%s:%s' % (_service_time_raw_by_minute,
-                    self.name, self.handle_return_time.strftime('%Y:%m:%d:%H:%M'))
-                pipe.rpush(key, self.processing_time)
-
-                # .. we'll have 5 minutes (5 * 60 seconds = 300 seconds)
-                # to aggregate processing times for a given minute and then it will expire
-
-                # Note that we need Redis 2.1.3+ otherwise the key has just been overwritten
-                pipe.expire(key, 300)
-                pipe.execute()
-
-        #
-        # Sample requests/responses
-        #
-
-        slow_response_enabled = self.server.component_enabled.slow_response
-        needs_usage = self._req_resp_freq and self.usage % self._req_resp_freq == 0
-
-        if slow_response_enabled or needs_usage:
-            raw_request = self.request.raw_request
-            if not raw_request:
-                req = ''
-            else:
-                req = raw_request if isinstance(raw_request, basestring) else repr(raw_request)
-
-        if needs_usage:
-
-            data = {
-                'cid': self.cid,
-                'req_ts': self.invocation_time.isoformat(),
-                'resp_ts': self.handle_return_time.isoformat(),
-                'req': req,
-                'resp':_get_response_value(self.response), # TODO: Don't parse it here and a moment later below
-            }
-            self.kvdb.conn.hmset(key, data)
-
-        #
-        # Slow responses
-        #
-        if slow_response_enabled and self.slow_threshold:
-
-            if self.processing_time > self.slow_threshold:
-
-                raw_request = self.request.raw_request
-                if not raw_request:
-                    req = ''
-                else:
-                    req = raw_request if isinstance(raw_request, basestring) else repr(raw_request)
-
-                data = {
-                    'cid': self.cid,
-                    'proc_time': self.processing_time,
-                    'slow_threshold': self.slow_threshold,
-                    'req_ts': self.invocation_time.isoformat(),
-                    'resp_ts': self.handle_return_time.isoformat(),
-                    'req': req,
-                    'resp':_get_response_value(self.response), # TODO: Don't parse it here and a moment earlier above
-                }
-                slow_response.store(self.kvdb, self.name, **data)
+# ################################################################################################################################
 
     def translate(self, *args, **kwargs):
         raise NotImplementedError('An initializer should override this method')
@@ -1080,7 +1133,7 @@ class Service(object):
 
 # ################################################################################################################################
 
-    def lock(self, name=None, *args, **kwargs):
+    def lock(self, name=None, *args, **kwargs) -> 'LockManager':
         """ Creates a distributed lock.
 
         name - defaults to self.name effectively making access to this service serialized
@@ -1108,6 +1161,11 @@ class Service(object):
 
     def accept(self, _zato_no_op_marker=zato_no_op_marker):
         return True
+
+# ################################################################################################################################
+
+    def spawn(self, *args, **kwargs):
+        return spawn(*args, **kwargs)
 
 # ################################################################################################################################
 

@@ -19,11 +19,9 @@ from bunch import Bunch, bunchify
 from lxml.etree import _Element as EtreeElement
 from lxml.objectify import ObjectifiedElement
 
-# Python 2/3 compatibility
-from future.utils import iteritems
-
 # Zato
 from zato.common.api import simple_types
+from zato.common.marshal_.api import Model
 from zato.common.json_internal import loads
 from zato.common.util.api import make_repr
 
@@ -47,6 +45,7 @@ if 0:
     from kombu.message import Message as KombuAMQPMessage
 
     # Zato
+    from zato.common.kvdb.api import KVDB as KVDBAPI
     from zato.common.odb.api import PoolStore
     from zato.hl7.mllp.server import ConnCtx as HL7ConnCtx
     from zato.server.config import ConfigDict, ConfigStore
@@ -57,7 +56,7 @@ if 0:
     from zato.server.connection.sms import SMSAPI
     from zato.server.connection.vault import VaultConnAPI
     from zato.server.connection.zmq_.outgoing import ZMQFacade
-    from zato.server.service import AMQPFacade
+    from zato.server.service import AMQPFacade, Service
 
     # Zato - Cython
     from zato.simpleio import CySimpleIO
@@ -72,6 +71,7 @@ if 0:
     hl7apy_Message = hl7apy_Message
     HL7ConnCtx = HL7ConnCtx
     KombuAMQPMessage = KombuAMQPMessage
+    KVDBAPI = KVDBAPI
     Logger = Logger
     PoolStore = PoolStore
     SearchAPI = SearchAPI
@@ -94,7 +94,7 @@ direct_payload = simple_types + (EtreeElement, ObjectifiedElement)
 
 # ################################################################################################################################
 
-class HTTPRequestData(object):
+class HTTPRequestData:
     """ Data regarding an HTTP request.
     """
     __slots__ = 'method', 'GET', 'POST', 'path', 'params', 'user_agent', '_wsgi_environ'
@@ -142,7 +142,7 @@ class HTTPRequestData(object):
 
 # ################################################################################################################################
 
-class AMQPRequestData(object):
+class AMQPRequestData:
     """ Data regarding an AMQP request.
     """
     __slots__ = ('msg', 'ack', 'reject')
@@ -155,7 +155,7 @@ class AMQPRequestData(object):
 
 # ################################################################################################################################
 
-class IBMMQRequestData(object):
+class IBMMQRequestData:
     """ Metadata for IBM MQ requests.
     """
     __slots__ = ('ctx', 'data', 'msg_id', 'correlation_id', 'timestamp', 'put_date', 'put_time', 'reply_to', 'mqmd')
@@ -177,7 +177,7 @@ WebSphereMQRequestData = IBMMQRequestData
 
 # ################################################################################################################################
 
-class HL7RequestData(object):
+class HL7RequestData:
     """ Details of an individual HL7 request.
     """
     __slots__ = 'connection', 'data',
@@ -189,16 +189,17 @@ class HL7RequestData(object):
 
 # ################################################################################################################################
 
-class Request(object):
+class Request:
     """ Wraps a service request and adds some useful meta-data.
     """
-    __slots__ = ('logger', 'payload', 'raw_request', 'input', 'cid', 'data_format', 'transport',
+    __slots__ = ('service', 'logger', 'payload', 'raw_request', 'input', 'cid', 'data_format', 'transport',
         'encrypt_func', 'encrypt_secrets', 'bytes_to_str_encoding', '_wsgi_environ', 'channel_params',
         'merge_channel_params', 'http', 'amqp', 'wmq', 'ibm_mq', 'hl7', 'enforce_string_encoding')
 
-    def __init__(self, logger, simple_io_config=None, data_format=None, transport=None):
-        # type: (Logger, object, str, str)
-        self.logger = logger
+    def __init__(self, service, simple_io_config=None, data_format=None, transport=None):
+        # type: (Service, object, str, str)
+        self.service = service
+        self.logger = service.logger # type: Logger
         self.payload = ''
         self.raw_request = ''
         self.input = {} # Will be overwritten in self.init if necessary
@@ -227,14 +228,16 @@ class Request(object):
 
         if is_sio:
 
-            parsed = sio.parse_input(self.payload or {}, data_format, extra=self.channel_params)
+            parsed = sio.parse_input(self.payload or {}, data_format, extra=self.channel_params, service=self.service)
 
-            if isinstance(parsed, dict):
-                self.input.update(parsed)
-
-            for param, value in iteritems(self.channel_params):
-                if param not in self.input:
-                    self.input[param] = value
+            if isinstance(parsed, Model):
+                self.input = parsed
+            else:
+                if isinstance(parsed, dict):
+                    self.input.update(parsed)
+                for param, value in self.channel_params.items():
+                    if param not in self.input:
+                        self.input[param] = value
 
         # We merge channel params in if requested even if it's not SIO
         else:
@@ -276,49 +279,54 @@ class Request(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Outgoing(object):
+class Outgoing:
     """ A container for various outgoing connections a service can access. This in fact is a thin wrapper around data
     fetched from the service's self.worker_store.
     """
     __slots__ = ('amqp', 'ftp', 'ibm_mq', 'jms_wmq', 'wmq', 'odoo', 'plain_http', 'rest', 'soap', 'sql', 'zmq', 'wsx', 'vault',
-        'sms', 'sap', 'sftp', 'ldap', 'mongodb', 'def_kafka', 'hl7')
+        'sms', 'sap', 'sftp', 'ldap', 'mongodb', 'def_kafka', 'hl7', 'redis')
 
     def __init__(self, amqp=None, ftp=None, jms_wmq=None, odoo=None, plain_http=None, soap=None, sql=None, zmq=None,
             wsx=None, vault=None, sms=None, sap=None, sftp=None, ldap=None, mongodb=None, def_kafka=None,
-            hl7=None):
+            hl7=None, redis=None):
 
         self.amqp = amqp # type: AMQPFacade
-        self.ftp = ftp   # type: FTPStore
+        self.ftp  = ftp  # type: FTPStore
 
         # Backward compat with 2.0, self.ibm_mq is now preferred
         self.ibm_mq = self.wmq = self.jms_wmq = jms_wmq # type: WMQFacade
 
-        self.odoo = odoo # type: ConfigDict
+        self.odoo       = odoo # type: ConfigDict
         self.plain_http = self.rest = plain_http # type: ConfigDict
-        self.soap = soap # type: ConfigDict
-        self.sql = sql   # type: PoolStore
-        self.zmq = zmq     # type: ZMQFacade
-        self.wsx = wsx     # type: dict
+
+        self.soap  = soap  # type: ConfigDict
+        self.sql   = sql   # type: PoolStore
+        self.zmq   = zmq   # type: ZMQFacade
+        self.wsx   = wsx   # type: dict
         self.vault = vault # type: VaultConnAPI
-        self.sms = sms   # type: SMSAPI
-        self.sap = sap   # type: ConfigDict
+
+        self.sms  = sms  # type: SMSAPI
+        self.sap  = sap  # type: ConfigDict
         self.sftp = sftp # type: ConfigDict
         self.ldap = ldap # type: dict
+
         self.mongodb = mongodb # type: dict
         self.def_kafka = None  # type: dict
-        self.hl7       = hl7   # type: HL7API
+
+        self.hl7   = hl7   # type: HL7API
+        self.redis = redis # type: KVDBAPI
 
 # ################################################################################################################################
 # ################################################################################################################################
 
-class AWS(object):
+class AWS:
     def __init__(self, s3=None):
         self.s3 = s3
 
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Cloud(object):
+class Cloud:
     """ A container for cloud-related connections a service can establish.
     """
     __slots__ = 'aws', 'dropbox'
@@ -330,7 +338,7 @@ class Cloud(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Definition(object):
+class Definition:
     """ A container for connection definitions a service has access to.
     """
     __slots__ = 'kafka',
@@ -342,7 +350,7 @@ class Definition(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class InstantMessaging(object):
+class InstantMessaging:
     """ A container for Instant Messaging connections, e.g. Slack or Telegram.
     """
     __slots__ = 'slack', 'telegram'
@@ -355,13 +363,13 @@ class InstantMessaging(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class MLLP(object):
+class MLLP:
     pass
 
 # ################################################################################################################################
 # ################################################################################################################################
 
-class HL7API(object):
+class HL7API:
     """ A container for HL7 connections a service can establish.
     """
     __slots__ = 'mllp'

@@ -46,7 +46,7 @@ SSOSessionTable = SSOSession.__table__
 
 # ################################################################################################################################
 
-class AttrEntity(object):
+class AttrEntity:
     """ Holds information about a particular attribute.
     """
     __slots__ = ('name', 'value', 'creation_time', 'last_modified', 'expiration_time', 'is_encrypted', '_is_session_attr')
@@ -90,7 +90,7 @@ class AttrEntity(object):
 
 # ################################################################################################################################
 
-class AttrAPI(object):
+class AttrAPI:
     """ A base class for both user and session SSO attributes.
     """
     def __init__(self, cid, current_user_id, is_super_user, current_app, remote_addr, odb_session_func, is_sqlite, encrypt_func,
@@ -148,12 +148,15 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'name':name, 'expiration':expiration, 'encrypt':encrypt, 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         self._require_correct_user('_create', user_id)
 
         now = _utcnow()
 
         attr_model = AttrModel()
-        attr_model.user_id = user_id or self.user_id
+        attr_model.user_id = user_id
         attr_model.ust = self.ust
         attr_model._ust_string = self.ust or '' # Cannot, and will not be, NULL, check the comment in the model for details
         attr_model.is_session_attr = self.is_session_attr
@@ -180,6 +183,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.create', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('create', user_id)
 
@@ -187,7 +193,7 @@ class AttrAPI(object):
             try:
                 return self._create(session, name, value, expiration, encrypt, user_id)
             except IntegrityError:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
                 raise ValidationError(status_code.attr.already_exists)
 
 # ################################################################################################################################
@@ -200,6 +206,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'name':name, 'expiration':expiration, 'encrypt':encrypt,
                 'is_super_user':self.is_super_user})
+
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
 
         # Check access permissions to that user's attributes
         self._require_correct_user('_set', user_id)
@@ -223,6 +232,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.set', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('set', user_id)
 
@@ -241,6 +253,9 @@ class AttrAPI(object):
                 'name':name, 'expiration':expiration, 'encrypt':encrypt,
                 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('_update', user_id)
 
@@ -256,7 +271,7 @@ class AttrAPI(object):
             values['expiration_time'] = now + timedelta(seconds=expiration)
 
         and_condition = [
-            AttrModelTable.c.user_id==(user_id or self.user_id),
+            AttrModelTable.c.user_id==(user_id),
             AttrModelTable.c.ust==self.ust,
             AttrModelTable.c.name==name,
             AttrModelTable.c.expiration_time > now,
@@ -294,6 +309,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.update', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('update', user_id)
 
@@ -310,6 +328,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'data':data, 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('_get', user_id)
 
@@ -319,7 +340,7 @@ class AttrAPI(object):
         now = _utcnow()
 
         q = session.query(columns).\
-            filter(AttrModel.user_id==(user_id or self.user_id)).\
+            filter(AttrModel.user_id==(user_id)).\
             filter(AttrModel.ust==self.ust).\
             filter(AttrModel.name.in_(data)).\
             filter(AttrModel.expiration_time > now)
@@ -355,6 +376,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.get/get_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('get', user_id)
 
@@ -374,6 +398,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('_exists', user_id)
 
@@ -389,6 +416,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
             'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('names', user_id)
 
@@ -396,7 +426,7 @@ class AttrAPI(object):
 
         with closing(self.odb_session_func()) as session:
             q = session.query(AttrModel.name).\
-                filter(AttrModel.user_id==(user_id or self.user_id)).\
+                filter(AttrModel.user_id==(user_id)).\
                 filter(AttrModel.ust==self.ust).\
                 filter(AttrModel.expiration_time > now)
 
@@ -418,6 +448,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.exists/exists_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('exists', user_id)
 
@@ -437,6 +470,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'data':data, 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('delete', user_id)
 
@@ -444,7 +480,7 @@ class AttrAPI(object):
         data = [data] if isinstance(data, basestring) else data
 
         and_condition = [
-            AttrModelTable.c.user_id==(user_id or self.user_id),
+            AttrModelTable.c.user_id==(user_id),
             AttrModelTable.c.ust==self.ust,
             AttrModelTable.c.name.in_(data),
             AttrModelTable.c.expiration_time > now,
@@ -483,6 +519,9 @@ class AttrAPI(object):
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr,
                 'is_super_user':self.is_super_user})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('_set_expiry', user_id)
 
@@ -496,6 +535,9 @@ class AttrAPI(object):
         # Audit comes first
         audit_pii.info(self.cid, 'attr.set_expiry', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
+
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
 
         # Check access permissions to that user's attributes
         self._require_correct_user('set_expiry', user_id)
@@ -514,6 +556,9 @@ class AttrAPI(object):
                 'is_super_user':self.is_super_user,
                 'func':func.__func__.__name__})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         with closing(self.odb_session_func()) as session:
             for item in data:
 
@@ -528,7 +573,7 @@ class AttrAPI(object):
             try:
                 session.commit()
             except IntegrityError:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
                 raise ValidationError(status_code.attr.already_exists)
 
 # ################################################################################################################################
@@ -536,6 +581,9 @@ class AttrAPI(object):
     def create_many(self, data, expiration=None, encrypt=False, user_id=None):
         """ Creates multiple attributes in one call.
         """
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Audit comes first
         audit_pii.info(self.cid, 'attr.create_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
@@ -554,6 +602,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.update_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('update_many', user_id)
 
@@ -568,6 +619,9 @@ class AttrAPI(object):
         audit_pii.info(self.cid, 'attr.set_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
 
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         # Check access permissions to that user's attributes
         self._require_correct_user('set_many', user_id)
 
@@ -581,6 +635,9 @@ class AttrAPI(object):
         # Audit comes first
         audit_pii.info(self.cid, 'attr.set_expiry_many', self.current_user_id,
             user_id, extra={'current_app':self.current_app, 'remote_addr':self.remote_addr})
+
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
 
         with closing(self.odb_session_func()) as session:
             for item in data:
@@ -600,12 +657,15 @@ class AttrAPI(object):
     def to_dict(self, decrypt=True, value_to_dict=False, serialize_dt=False, user_id=None, _utcnow=_utcnow):
         """ Returns a list of all attributes.
         """
+        # Default to current user unless overridden on input
+        user_id = user_id or self.user_id
+
         out = {}
         now = _utcnow()
 
         with closing(self.odb_session_func()) as session:
             q = session.query(AttrModel).\
-                filter(AttrModel.user_id==(user_id or self.user_id)).\
+                filter(AttrModel.user_id==(user_id)).\
                 filter(AttrModel.ust==self.ust).\
                 filter(AttrModel.expiration_time > now)
 

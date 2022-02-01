@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+# ################################################################################################################################
+# ################################################################################################################################
+
+class ServiceConst:
+    ServiceInvokerName = 'pub.zato.service.service-invoker'
 
 # ################################################################################################################################
 # ################################################################################################################################
@@ -18,6 +22,10 @@ class SECRETS:
 
     # Zato secret (Fernet)
     PREFIX = 'zato.secf.'
+    PREFIX_BYTES = b'zato.secf.'
+
+    # Encrypted data has this prefix
+    EncryptedMarker = 'gAAA'
 
     # Zato secret (configuration)
     URL_PREFIX = 'zato+secret://'

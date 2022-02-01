@@ -6,6 +6,8 @@ Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
+# pylint: disable=too-many-public-methods
+
 # stdlib
 import logging
 import inspect
@@ -19,19 +21,11 @@ from os.path import abspath, join as path_join
 from shutil import rmtree
 from tempfile import gettempdir
 from threading import RLock
-from time import sleep
 from traceback import format_exc
 from uuid import uuid4
 
 # Bunch
 from bunch import bunchify
-
-# ciso8601
-from ciso8601 import parse_datetime
-
-# dateutil
-from dateutil.relativedelta import relativedelta
-from dateutil.rrule import DAILY, MINUTELY, rrule
 
 # gevent
 import gevent
@@ -46,11 +40,10 @@ from past.builtins import basestring
 from six import PY3
 
 # Zato
-from zato.broker import BrokerMessageReceiver
 from zato.bunch import Bunch
 from zato.common import broker_message
 from zato.common.api import CHANNEL, CONNECTION, DATA_FORMAT, FILE_TRANSFER, GENERIC as COMMON_GENERIC, \
-     HotDeploy, HTTP_SOAP_SERIALIZATION_TYPE, IPC, KVDB, NOTIF, PUBSUB, RATE_LIMIT, SEC_DEF_TYPE, simple_types, URL_TYPE, \
+     HotDeploy, HTTP_SOAP_SERIALIZATION_TYPE, IPC, NOTIF, PUBSUB, RATE_LIMIT, SEC_DEF_TYPE, simple_types, URL_TYPE, \
      TRACE1, WEB_SOCKET, ZATO_NONE, ZATO_ODB_POOL_NAME, ZMQ
 from zato.common.broker_message import code_to_name, GENERIC as BROKER_MSG_GENERIC, SERVICE
 from zato.common.const import SECRETS
@@ -62,7 +55,7 @@ from zato.common.model.wsx import WSXConnectorConfig
 from zato.common.odb.api import PoolStore, SessionWrapper
 from zato.common.pubsub import MSG_PREFIX as PUBSUB_MSG_PREFIX
 from zato.common.util.api import get_tls_ca_cert_full_path, get_tls_key_cert_full_path, get_tls_from_payload, \
-     import_module_from_path, new_cid, pairwise, parse_extra_into_dict, parse_tls_channel_security_definition, \
+     import_module_from_path, new_cid, parse_extra_into_dict, parse_tls_channel_security_definition, \
      start_connectors, store_tls, update_apikey_username_to_channel, update_bind_port, visit_py_source
 from zato.cy.reqresp.payload import SimpleIOPayload
 from zato.server.base.parallel.subprocess_.api import StartConfig as SubprocessStartConfig
@@ -101,7 +94,6 @@ from zato.server.pubsub import PubSub
 from zato.server.pubsub.task import PubSubTool
 from zato.server.query import CassandraQueryAPI, CassandraQueryStore
 from zato.server.rbac_ import RBAC
-from zato.server.stats import MaintenanceTool
 from zato.zmq_.channel import MDPv01 as ChannelZMQMDPv01, Simple as ChannelZMQSimple
 from zato.zmq_.outgoing import Simple as OutZMQSimple
 
@@ -178,7 +170,7 @@ _base_type = _base_type if PY3 else _base_type.encode('utf8')
 # Dynamically adds as base classes everything found in current directory that subclasses WorkerImpl
 _WorkerStoreBase = type(_base_type, _get_base_classes(), {})
 
-class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
+class WorkerStore(_WorkerStoreBase):
     """ Dispatches work between different pieces of configuration of an individual gunicorn worker.
     """
     def __init__(self, worker_config=None, server=None):
@@ -237,13 +229,6 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
 # ################################################################################################################################
 
     def init(self):
-
-        # Statistics maintenance
-        self.stats_maint = MaintenanceTool(self.kvdb.conn)
-
-        self.msg_ns_store = self.worker_config.msg_ns_store
-        self.json_pointer_store = self.worker_config.json_pointer_store
-        self.xpath_store = self.worker_config.xpath_store
 
         # Cassandra
         self.cassandra_api = CassandraAPI(CassandraConnStore())
@@ -312,13 +297,6 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
         # Maps message actions against generic connection types and their message handlers
         self.generic_impl_func_map = {}
 
-        # Message-related config - init_msg_ns_store must come before init_xpath_store
-        # so the latter has access to the former's namespace map.
-
-        self.init_msg_ns_store()
-        self.init_json_pointer_store()
-        self.init_xpath_store()
-
         # After connection is establised, a flag is stored here to let queries consult it
         # before they attempt to prepare statements. In other words, queries wait for connections.
         # They do it in separate greenlets.
@@ -375,7 +353,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
             self.worker_config.wss, self.worker_config.apikey, self.worker_config.aws,
             self.worker_config.xpath_sec, self.worker_config.tls_channel_sec,
             self.worker_config.tls_key_cert, self.worker_config.vault_conn_sec, self.kvdb, self.broker_client, self.server.odb,
-            self.json_pointer_store, self.xpath_store, self.server.jwt_secret, self.vault_conn_api)
+            self.server.jwt_secret, self.vault_conn_api)
 
         self.request_dispatcher.request_handler = RequestHandler(self.server)
 
@@ -462,8 +440,14 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
         """ Creates a new HTTP/SOAP connection wrapper out of a configuration dictionary.
         """
         security_name = config.get('security_name')
-        sec_config = {'security_name':security_name, 'sec_type':None, 'username':None, 'password':None, 'password_type':None,
-            'orig_username':None}
+        sec_config = {
+            'security_name':security_name,
+            'sec_type':None,
+            'username':None,
+            'password':None,
+            'password_type':None,
+            'orig_username':None
+        }
         _sec_config = None
 
         # This will be set to True only if the method's invoked on a server's starting up
@@ -496,16 +480,23 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
                 sec_config['tls_key_cert_full_path'] = get_tls_key_cert_full_path(
                     self.server.tls_dir, get_tls_from_payload(auth_data, True))
 
-        wrapper_config = {'id':config.id,
-            'is_active':config.is_active, 'method':config.method,
+        wrapper_config = {
+            'id':config.id,
+            'is_active':config.is_active,
+            'method':config.method,
             'data_format':config.get('data_format'),
-            'name':config.name, 'transport':config.transport,
+            'name':config.name,
+            'transport':config.transport,
             'address_host':config.host,
             'address_url_path':config.url_path,
-            'soap_action':config.soap_action, 'soap_version':config.soap_version, 'ping_method':config.ping_method,
-            'pool_size':config.pool_size, 'serialization_type':config.serialization_type,
-            'timeout':config.timeout, 'content_type':config.content_type,
-            }
+            'soap_action':config.soap_action,
+            'soap_version':config.soap_version,
+            'ping_method':config.ping_method,
+            'pool_size':config.pool_size,
+            'serialization_type':config.serialization_type,
+            'timeout':config.timeout,
+            'content_type':config.content_type,
+        }
         wrapper_config.update(sec_config)
 
         # Key 'sec_tls_ca_cert_verify_strategy' was added in 3.2
@@ -544,7 +535,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
                 wrapper.build_client_queue()
             return wrapper
 
-        return HTTPSOAPWrapper(wrapper_config)
+        return HTTPSOAPWrapper(self.server, wrapper_config)
 
 # ################################################################################################################################
 
@@ -660,7 +651,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
                 self.update_cassandra_conn(v.config)
                 self.cassandra_api.create_def(k, v.config, self._on_cassandra_connection_established)
             except Exception:
-                logger.warn('Could not create a Cassandra connection `%s`, e:`%s`', k, format_exc())
+                logger.warning('Could not create a Cassandra connection `%s`, e:`%s`', k, format_exc())
 
 # ################################################################################################################################
 
@@ -671,7 +662,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
 
             idx += 1
             if not idx % 20:
-                logger.warn('Still waiting for `%s` Cassandra connection', config.def_name)
+                logger.warning('Still waiting for `%s` Cassandra connection', config.def_name)
 
         create_func(k, config, def_=self.cassandra_api[config.def_name])
 
@@ -680,7 +671,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
             try:
                 gevent.spawn(self._init_cassandra_query, self.cassandra_query_api.create, k, v.config)
             except Exception:
-                logger.warn('Could not create a Cassandra query `%s`, e:`%s`', k, format_exc())
+                logger.warning('Could not create a Cassandra query `%s`, e:`%s`', k, format_exc())
 
 # ################################################################################################################################
 
@@ -690,7 +681,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
             try:
                 api.create(k, v.config)
             except Exception:
-                logger.warn('Could not create {} connection `%s`, e:`%s`'.format(name), k, format_exc())
+                logger.warning('Could not create {} connection `%s`, e:`%s`'.format(name), k, format_exc())
 
 # ################################################################################################################################
 
@@ -945,20 +936,6 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
 
 # ################################################################################################################################
 
-    def init_msg_ns_store(self):
-        for k, v in self.worker_config.msg_ns.items():
-            self.msg_ns_store.add(k, v.config)
-
-    def init_xpath_store(self):
-        for k, v in self.worker_config.xpath.items():
-            self.xpath_store.add(k, v.config, self.msg_ns_store.ns_map)
-
-    def init_json_pointer_store(self):
-        for k, v in self.worker_config.json_pointer.items():
-            self.json_pointer_store.add(k, v.config)
-
-# ################################################################################################################################
-
     def _update_auth(self, msg, action_name, sec_type, visit_wrapper, keys=None):
         """ A common method for updating auth-related configuration.
         """
@@ -1034,7 +1011,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
         topic_list = config.get('topic_list') or []
         topic_list = topic_list if isinstance(topic_list, list) else [topic_list]
 
-        return bunchify({
+        data = {
 
           # Tell the manager to start this channel only
           # if we are very first process among potentially many ones for this server.
@@ -1048,6 +1025,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
           'source_type': FILE_TRANSFER.SOURCE_TYPE.LOCAL.id,
           'pickup_from_list': pickup_from_list,
           'is_hot_deploy': config.get('is_hot_deploy'),
+          'should_deploy_in_place': config.get('deploy_in_place', False),
           'service_list': service_list,
           'topic_list': topic_list,
           'move_processed_to': move_processed_to,
@@ -1061,7 +1039,9 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
           'is_recursive': config.get('is_recursive', False),
           'binary_file_patterns': config.get('binary_file_patterns') or [],
           'outconn_rest_list': [],
-        })
+        }
+
+        return bunchify(data)
 
 # ################################################################################################################################
 
@@ -1069,19 +1049,22 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
 
         # Default pickup directory
         self._add_service_pickup_to_file_transfer(
-            'hot-deploy', self.server.hot_deploy_config.pickup_dir, self.server.hot_deploy_config.delete_after_pickup)
+            'hot-deploy', self.server.hot_deploy_config.pickup_dir,
+            self.server.hot_deploy_config.delete_after_pickup, False)
 
         # User-defined pickup directories
         for name, config in self.server.pickup_config.items():
             if name.startswith(HotDeploy.UserPrefix):
-                self._add_service_pickup_to_file_transfer('hot-deploy-user-prefix', config.pickup_from, False)
+                self._add_service_pickup_to_file_transfer(
+                    name, config.pickup_from, False,
+                    config.get('deploy_in_place', True))
 
         # Convert all the other pickup entries
         self._convert_pickup_to_file_transfer()
 
 # ################################################################################################################################
 
-    def _add_service_pickup_to_file_transfer(self, name, pickup_dir, delete_after_pickup):
+    def _add_service_pickup_to_file_transfer(self, name, pickup_dir, delete_after_pickup, deploy_in_place):
 
         # Explicitly create configuration for hot-deployment
         hot_deploy_name = '{}.{}'.format(pickup_conf_item_prefix, name)
@@ -1090,7 +1073,8 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
             'patterns': '*.py',
             'services': 'zato.hot-deploy.create',
             'pickup_from': pickup_dir,
-            'delete_after_pickup': delete_after_pickup
+            'delete_after_pickup': delete_after_pickup,
+            'deploy_in_place': deploy_in_place,
         })
 
         # Add hot-deployment to local file transfer
@@ -1659,40 +1643,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
         """ Triggered by external events, such as messages sent through connectors. Creates a new service instance and invokes it.
         """
         zato_ctx = msg.get('zato_ctx') or {}
-        target = zato_ctx.get('zato.request_ctx.target', '')
         cid = msg['cid']
-
-        if target:
-
-            if not self.target_matcher.is_allowed(target):
-                # It's not an error - we just don't accept this target
-                logger.debug('Invocation target `%s` not allowed (%s), CID:%s', target, msg['service'], cid)
-                return
-
-            # We can in theory handle this request but there's still some work first. Our server can be composed
-            # of more than 1 gunicorn worker and each of them receives the messages directed to concrete targets.
-            # Hence we must first check out if another worker from our server didn't beat us to it already.
-            # Everything must be done with a distributed server-wide lock so that workers don't
-            # interrupt each other.
-            else:
-                lock = KVDB.LOCK_ASYNC_INVOKE_WITH_TARGET_PATTERN.format(self.server.fs_server_config.main.token, cid)
-                processed_key = KVDB.ASYNC_INVOKE_PROCESSED_FLAG_PATTERN.format(self.server.fs_server_config.main.token, cid)
-
-                with self.server.zato_lock_manager(lock):
-                    processed = self.server.kvdb.conn.get(processed_key)
-
-                    # Ok, already processed
-                    if processed == KVDB.ASYNC_INVOKE_PROCESSED_FLAG_PATTERN:
-                        return
-
-                    # We are first, set the processed flag. The flag expires in 5 minutes
-                    # which is an arbitrary number huge enough to make sure other workers
-                    # within our own server will be able to receive the async message
-                    # we are about to process. Note that we don't set the flag after the processing
-                    # is finished because even if there is any error along the invocation won't be repeated,
-                    # hence we do it here already.
-                    else:
-                        self.server.kvdb.conn.set(processed_key, KVDB.ASYNC_INVOKE_PROCESSED_FLAG_PATTERN, 300)
 
         # The default WSGI environment that always exists ..
         wsgi_environ = {
@@ -1716,7 +1667,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
         service, is_active = self.server.service_store.new_instance_by_name(msg['service']) # type: (Service, bool)
         if not is_active:
             msg = 'Could not invoke an inactive service:`{}`, cid:`{}`'.format(service.get_name(), cid)
-            logger.warn(msg)
+            logger.warning(msg)
             raise Exception(msg)
 
         skip_response_elem=kwargs.get('skip_response_elem')
@@ -1902,7 +1853,7 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
                 try:
                     rmtree(suds_tmp_dir, True)
                 except Exception:
-                    logger.warn('Could not remove suds directory `%s`, e:`%s`', suds_tmp_dir, format_exc())
+                    logger.warning('Could not remove suds directory `%s`, e:`%s`', suds_tmp_dir, format_exc())
 
         # It might be a rename
         old_name = msg.get('old_name')
@@ -1976,7 +1927,6 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
     def on_broker_msg_SERVICE_EDIT(self, msg, *args):
         # type: (dict)
         del msg['action']
-        del msg['msg_type']
         self.server.service_store.edit_service_data(msg)
 
 # ################################################################################################################################
@@ -2046,105 +1996,8 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
 
 # ################################################################################################################################
 
-    def on_broker_msg_STATS_DELETE(self, msg, *args):
-        start = parse_datetime(msg.start)
-        stop = parse_datetime(msg.stop)
-
-        # Looks weird but this is so we don't have to create a list instead of a generator
-        # (and Python 3 won't leak the last element anymore)
-        last_elem = None
-
-        # Are the dates are at least a day apart? If so, we'll split the interval
-        # into smaller one day-long batches.
-        if(stop-start).days:
-            for elem1, elem2 in pairwise(elem for elem in rrule(DAILY, dtstart=start, until=stop)):
-                self.broker_client.invoke_async(
-                    {'action':broker_message.STATS.DELETE_DAY.value, 'start':elem1.isoformat(), 'stop':elem2.isoformat()})
-
-                # So as not to drown the broker with a sudden surge of messages
-                sleep(0.02)
-
-                last_elem = elem2
-
-            # It's possible we still have something left over. Let's say
-            #
-            # start = '2012-07-24T02:02:53'
-            # stop = '2012-07-25T02:04:53'
-            #
-            # The call to rrule(DAILY, ...) will nicely slice the time between
-            # start and stop into one day intervals yet the last element of the slice
-            # will have the time portion equal to that of start - so in this
-            # particular case it would be that last_elem was 2012-07-25T02:02:53
-            # which would be still be 2 minutes short of stop. Hence the need for
-            # a relativedelta, to tease out the remaining time information.
-            delta = relativedelta(stop, last_elem)
-            if delta.minutes:
-                self.stats_maint.delete(last_elem, stop, MINUTELY)
-
-        # Not a full day apart so we can delete everything ourselves
-        else:
-            self.stats_maint.delete(start, stop, MINUTELY)
-
-    def on_broker_msg_STATS_DELETE_DAY(self, msg, *args):
-        self.stats_maint.delete(parse_datetime(msg.start), parse_datetime(msg.stop), MINUTELY)
-
-# ################################################################################################################################
-
     def on_broker_msg_SERVICE_PUBLISH(self, msg, args=None):
         return self.on_message_invoke_service(msg, msg.get('channel') or CHANNEL.INVOKE_ASYNC, 'SERVICE_PUBLISH', args)
-
-# ################################################################################################################################
-
-    def on_broker_msg_MSG_NS_CREATE(self, msg, *args):
-        """ Creates a new namespace.
-        """
-        self.msg_ns_store.on_broker_msg_MSG_NS_CREATE(msg, *args)
-
-    def on_broker_msg_MSG_NS_EDIT(self, msg, *args):
-        """ Updates an existing namespace.
-        """
-        self.msg_ns_store.on_broker_msg_MSG_NS_EDIT(msg, *args)
-
-    def on_broker_msg_MSG_NS_DELETE(self, msg, *args):
-        """ Deletes a namespace.
-        """
-        self.msg_ns_store.on_broker_msg_MSG_NS_DELETE(msg, *args)
-
-# ################################################################################################################################
-
-    def on_broker_msg_MSG_XPATH_CREATE(self, msg, *args):
-        """ Creates a new XPath.
-        """
-        self.xpath_store.on_broker_msg_create(msg, self.msg_ns_store.ns_map)
-
-    def on_broker_msg_MSG_XPATH_EDIT(self, msg, *args):
-        """ Updates an existing XPath.
-        """
-        self.xpath_store.on_broker_msg_edit(msg, self.msg_ns_store.ns_map)
-
-    def on_broker_msg_MSG_XPATH_DELETE(self, msg, *args):
-        """ Deletes an XPath.
-        """
-        self.xpath_store.on_broker_msg_delete(msg, *args)
-
-# ################################################################################################################################
-
-    def on_broker_msg_MSG_JSON_POINTER_CREATE(self, msg, *args):
-        """ Creates a new JSON Pointer.
-        """
-        self.json_pointer_store.on_broker_msg_create(msg)
-
-    def on_broker_msg_MSG_JSON_POINTER_EDIT(self, msg, *args):
-        """ Updates an existing JSON Pointer.
-        """
-        self.request_dispatcher.url_data.on_broker_msg_MSG_JSON_POINTER_EDIT(msg)
-        self.json_pointer_store.on_broker_msg_edit(msg)
-
-    def on_broker_msg_MSG_JSON_POINTER_DELETE(self, msg, *args):
-        """ Deletes an JSON Pointer.
-        """
-        # Delete the pattern from its store
-        self.json_pointer_store.on_broker_msg_delete(msg, *args)
 
 # ################################################################################################################################
 
@@ -2461,6 +2314,6 @@ class WorkerStore(_WorkerStoreBase, BrokerMessageReceiver):
             with open(msg.reply_to_fifo, 'wb') as fifo:
                 fifo.write(data if isinstance(data, bytes) else data.encode('utf'))
         except Exception:
-            logger.warn('Could not write to FIFO, m:`%s`, r:`%s`, s:`%s`, e:`%s`', msg, response, status, format_exc())
+            logger.warning('Could not write to FIFO, m:`%s`, r:`%s`, s:`%s`, e:`%s`', msg, response, status, format_exc())
 
 # ################################################################################################################################

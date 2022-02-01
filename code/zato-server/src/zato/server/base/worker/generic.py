@@ -39,8 +39,8 @@ class Generic(WorkerImpl):
         found_conn_dict = None
         found_name = None
 
-        for conn_type, value in self.generic_conn_api.items():
-            for conn_name, conn_dict in value.items():
+        for _ignored_conn_type, value in self.generic_conn_api.items():
+            for _ignored_conn_name, conn_dict in value.items():
                 if conn_dict['id'] == item_id:
                     return conn_dict, value
 
@@ -217,7 +217,7 @@ class Generic(WorkerImpl):
             try:
                 func(config)
             except Exception:
-                self.logger.warn('Could not invoke `%s` with `%r`', func, config)
+                self.logger.warning('Could not invoke `%s` with `%r`', func, config)
                 raise
 
 # ################################################################################################################################

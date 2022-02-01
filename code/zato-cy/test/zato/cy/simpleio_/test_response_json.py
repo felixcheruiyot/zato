@@ -40,7 +40,7 @@ class JSONResponse(BaseSIOTestCase):
             class SimpleIO:
                 output = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -58,10 +58,10 @@ class JSONResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.JSON)
         json_data = json_loads(result)
 
-        self.assertEquals(json_data['aaa'], aaa)
-        self.assertEquals(json_data['bbb'], int(bbb))
-        self.assertEquals(json_data['ccc'], ccc)
-        self.assertEquals(json_data['eee'], eee)
+        self.assertEqual(json_data['aaa'], aaa)
+        self.assertEqual(json_data['bbb'], int(bbb))
+        self.assertEqual(json_data['ccc'], ccc)
+        self.assertEqual(json_data['eee'], eee)
 
 # ################################################################################################################################
 
@@ -72,7 +72,7 @@ class JSONResponse(BaseSIOTestCase):
                 output = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
                 response_elem = 'my_response_elem'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -92,10 +92,10 @@ class JSONResponse(BaseSIOTestCase):
         json_data = json_loads(result)
         json_data = bunchify(json_data)
 
-        self.assertEquals(json_data.my_response_elem.aaa, aaa)
-        self.assertEquals(json_data.my_response_elem.bbb, int(bbb))
-        self.assertEquals(json_data.my_response_elem.ccc, ccc)
-        self.assertEquals(json_data.my_response_elem.eee, eee)
+        self.assertEqual(json_data.my_response_elem.aaa, aaa)
+        self.assertEqual(json_data.my_response_elem.bbb, int(bbb))
+        self.assertEqual(json_data.my_response_elem.ccc, ccc)
+        self.assertEqual(json_data.my_response_elem.eee, eee)
 
 # ################################################################################################################################
 
@@ -106,7 +106,7 @@ class JSONResponse(BaseSIOTestCase):
                 output = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
                 csv_delimiter = ':'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa1 = 'aaa-111-1'
         bbb1 = '2221'
@@ -126,15 +126,15 @@ class JSONResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.JSON)
         json_data = json_loads(result)
 
-        self.assertEquals(json_data[0]['aaa'], aaa1)
-        self.assertEquals(json_data[0]['bbb'], int(bbb1))
-        self.assertEquals(json_data[0]['ccc'], ccc1)
-        self.assertEquals(json_data[0]['eee'], eee1)
+        self.assertEqual(json_data[0]['aaa'], aaa1)
+        self.assertEqual(json_data[0]['bbb'], int(bbb1))
+        self.assertEqual(json_data[0]['ccc'], ccc1)
+        self.assertEqual(json_data[0]['eee'], eee1)
 
-        self.assertEquals(json_data[1]['aaa'], aaa2)
-        self.assertEquals(json_data[1]['bbb'], int(bbb2))
-        self.assertEquals(json_data[1]['ccc'], ccc2)
-        self.assertEquals(json_data[1]['eee'], eee2)
+        self.assertEqual(json_data[1]['aaa'], aaa2)
+        self.assertEqual(json_data[1]['bbb'], int(bbb2))
+        self.assertEqual(json_data[1]['ccc'], ccc2)
+        self.assertEqual(json_data[1]['eee'], eee2)
 
 # ################################################################################################################################
 
@@ -145,7 +145,7 @@ class JSONResponse(BaseSIOTestCase):
                 output = 'aaa', AsIs('bbb'), Bool('ccc'), 'ddd', Date('eee'), DateTime('fff'), Decimal('ggg'), \
                     Float('jjj'), Int('mmm'), Opaque('ooo'), Text('ppp'), UUID('qqq')
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = 'bbb-222-bbb'
@@ -181,17 +181,17 @@ class JSONResponse(BaseSIOTestCase):
         result = MyService._sio.get_output(data, DATA_FORMAT.JSON)
         json_data = json_loads(result)
 
-        self.assertEquals(json_data['aaa'], aaa)
-        self.assertEquals(json_data['bbb'], bbb)
-        self.assertEquals(json_data['ccc'], ccc)
-        self.assertEquals(json_data['eee'], '1999-12-31')
-        self.assertEquals(json_data['fff'], '1988-01-29T11:22:33+00:00')
-        self.assertEquals(json_data['ggg'], ggg)
-        self.assertEquals(json_data['jjj'], float(jjj))
-        self.assertEquals(json_data['mmm'], int(mmm))
-        self.assertEquals(json_data['ooo'], ooo)
-        self.assertEquals(json_data['ppp'], ppp)
-        self.assertEquals(json_data['qqq'], qqq.hex)
+        self.assertEqual(json_data['aaa'], aaa)
+        self.assertEqual(json_data['bbb'], bbb)
+        self.assertEqual(json_data['ccc'], ccc)
+        self.assertEqual(json_data['eee'], '1999-12-31')
+        self.assertEqual(json_data['fff'], '1988-01-29T11:22:33+00:00')
+        self.assertEqual(json_data['ggg'], ggg)
+        self.assertEqual(json_data['jjj'], float(jjj))
+        self.assertEqual(json_data['mmm'], int(mmm))
+        self.assertEqual(json_data['ooo'], ooo)
+        self.assertEqual(json_data['ppp'], ppp)
+        self.assertEqual(json_data['qqq'], qqq.hex)
 
 # ################################################################################################################################
 
@@ -201,7 +201,7 @@ class JSONResponse(BaseSIOTestCase):
             class SimpleIO:
                 output = Int('aaa'), 'bbb'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa'
         bbb = '222'

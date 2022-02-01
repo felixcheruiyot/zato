@@ -65,7 +65,7 @@ def default_json_handler(value):
 
 # ################################################################################################################################
 
-class _APIResponse(object):
+class _APIResponse:
     """ A class to represent data returned by API services.
     """
     def __init__(self, inner, _OK=OK):
@@ -82,7 +82,7 @@ class _APIResponse(object):
 
 # ################################################################################################################################
 
-class APIClient(object):
+class APIClient:
     def __init__(self, address, username, password, path='/zato/api/invoke/{}', tls_verify=None, tls_cert=None):
         self.address = address
         self.username = username
@@ -133,7 +133,7 @@ class APIClient(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class _Response(object):
+class _Response:
     """ A base class for all specific response types client may return.
     """
     def __init__(self, inner, to_bunch, max_response_repr, max_cid_repr, logger, output_repeated=False):
@@ -378,7 +378,7 @@ class RawDataResponse(_Response):
 
 # ################################################################################################################################
 
-class _Client(object):
+class _Client:
     """ A base class of convenience clients for invoking Zato services from other Python applications.
     """
     def __init__(self, address, path, auth=None, session=None, to_bunch=False,
@@ -397,6 +397,7 @@ class _Client(object):
         self.max_cid_repr = max_cid_repr
         self.logger = logger or mod_logger
         self.tls_verify = tls_verify
+        self.has_debug = self.logger.isEnabledFor(logging.DEBUG)
 
         if not self.session.auth:
             self.session.auth = auth
@@ -412,7 +413,7 @@ class _Client(object):
         if isinstance(request, (bytes, bytearray)):
             request = request.decode('utf-8')
 
-        if self.logger.isEnabledFor(logging.DEBUG):
+        if self.has_debug:
             msg = 'request:[%s]\nresponse_class:[%s]\nis_async:[%s]\nheaders:[%s]\n text:[%s]\ndata:[%s]'
             self.logger.debug(msg, request, response_class, is_async, headers, raw_response.text, response.data)
 
@@ -464,7 +465,7 @@ class AnyServiceInvoker(_Client):
     def _invoke(self, name=None, payload='', headers=None, channel='invoke', data_format='json',
                 transport=None, is_async=False, expiration=BROKER.DEFAULT_EXPIRATION, id=None,
                 to_json=True, output_repeated=ZATO_NOT_GIVEN, pid=None, all_pids=False, timeout=None,
-                skip_response_elem=True):
+                skip_response_elem=True, **kwargs):
 
         if not(name or id):
             raise ZatoException(msg='Either name or id must be provided')
@@ -526,7 +527,6 @@ class RawDataClient(_Client):
 def get_client_from_server_conf(server_dir, client_auth_func, get_config_func, server_url=None, stdin_data=None):
     """ Returns a Zato client built out of data found in a given server's config files.
     """
-
     # stdlib
     import os
 
@@ -544,7 +544,6 @@ def get_client_from_server_conf(server_dir, client_auth_func, get_config_func, s
 
     repo_location = get_repo_dir_from_component_dir(server_dir)
     stdin_data = stdin_data or read_stdin_data()
-
     crypto_manager = ServerCryptoManager.from_repo_dir(None, repo_location, stdin_data=stdin_data)
 
     secrets_config = ConfigObj(os.path.join(repo_location, 'secrets.conf'), use_zato=False)
@@ -553,7 +552,11 @@ def get_client_from_server_conf(server_dir, client_auth_func, get_config_func, s
         crypto_manager=crypto_manager, secrets_conf=secrets_config)
 
     config = get_config_func(repo_location, 'server.conf', crypto_manager=crypto_manager, secrets_conf=secrets_conf)
-    server_url = server_url if server_url else config.main.gunicorn_bind
+
+    # Note that we cannot use 0.0.0.0 under Windows but, since it implies localhost, we can just replace it as below.
+    server_url = server_url if server_url else config.main.gunicorn_bind # type: str
+    server_url = server_url.replace('0.0.0.0', '127.0.0.1')
+
     client_auth = client_auth_func(config, repo_location, crypto_manager, False)
     client = ZatoClient('http://{}'.format(server_url), '/zato/admin/invoke', client_auth, max_response_repr=15000)
     session = get_odb_session_from_server_config(config, None, False)

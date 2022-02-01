@@ -46,18 +46,17 @@ from zato.common.util.api import current_host, get_component_name, get_engine_ur
      parse_tls_channel_security_definition, spawn_greenlet
 from zato.common.util.sql import ElemsWithOpaqueMaker, elems_with_opaque
 from zato.common.util.url_dispatcher import get_match_target
+from zato.common.typing_ import union_
 from zato.sso.odb.query import get_rate_limiting_info as get_sso_user_rate_limiting_info
 
 # ################################################################################################################################
 
-# Type checking
-import typing
-
-if typing.TYPE_CHECKING:
+if 0:
+    from sqlalchemy.orm import Session
+    from zato.common.typing_ import commondict
     from zato.server.base.parallel import ParallelServer
 
-    # For pyflakes
-    ParallelServer = ParallelServer
+    Session = Session
 
 # ################################################################################################################################
 
@@ -85,9 +84,14 @@ DeployedServiceDelete = DeployedServiceTable.delete
 # ################################################################################################################################
 # ################################################################################################################################
 
+anysession = union_[SimpleSession, 'Session']
+
+# ################################################################################################################################
+# ################################################################################################################################
+
 # Based on https://bitbucket.org/zzzeek/sqlalchemy/wiki/UsageRecipes/WriteableTuple
 
-class WritableKeyedTuple(object):
+class SQLRow:
 
     def __init__(self, elem):
         object.__setattr__(self, '_elem', elem)
@@ -115,19 +119,25 @@ class WritableKeyedTuple(object):
 # ################################################################################################################################
 
     def __repr__(self):
-        return '<WritableKeyedTuple at {}>'.format(hex(id(self)))
+        return '<SQLRow at {}>'.format(hex(id(self)))
 
 # ################################################################################################################################
 
-    def get_value(self):
+    def get_value(self) -> 'commondict':
         return self._elem._asdict()
 
+# For backward compatibility
+WritableKeyedTuple = SQLRow
+
 # ################################################################################################################################
 # ################################################################################################################################
 
-class SessionWrapper(object):
+class SessionWrapper:
     """ Wraps an SQLAlchemy session.
     """
+
+    _Session:anysession
+
     def __init__(self):
         self.session_initialized = False
         self.pool = None      # type: SQLConnectionPool
@@ -152,7 +162,7 @@ class SessionWrapper(object):
                 err_details = format_exc()
             else:
                 err_details = e.args[0]
-            self.logger.warn(msg, name, err_details)
+            self.logger.warning(msg, name, err_details)
         else:
             if config['engine'] == MS_SQL.ZATO_DIRECT:
                 self._Session = SimpleSession(self.pool.engine)
@@ -166,7 +176,7 @@ class SessionWrapper(object):
             self.session_initialized = True
             self.is_sqlite = self.pool.engine and self.pool.engine.name == 'sqlite'
 
-    def session(self):
+    def session(self) -> anysession:
         return self._Session()
 
     def close(self):
@@ -191,7 +201,7 @@ class WritableTupleQuery(Query):
 
         # A list of objects, e.g. from .all()
         elif len_columns_desc > 1:
-            return (WritableKeyedTuple(elem) for elem in out)
+            return (SQLRow(elem) for elem in out)
 
         # Anything else
         else:
@@ -200,7 +210,7 @@ class WritableTupleQuery(Query):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class SQLConnectionPool(object):
+class SQLConnectionPool:
     """ A pool of SQL connections wrapping an SQLAlchemy engine.
     """
     def __init__(self, name, config, config_no_sensitive, should_init=True):
@@ -246,7 +256,7 @@ class SQLConnectionPool(object):
         try:
             self.engine = self._create_engine(engine_url, self.config, _extra)
         except Exception as e:
-            self.logger.warn('Could not create SQL connection `%s`, e:`%s`', self.config['name'], e.args[0])
+            self.logger.warning('Could not create SQL connection `%s`, e:`%s`', self.config['name'], e.args[0])
 
         if self.engine and (not self._is_unittest_engine(engine_url)) and self._is_sa_engine(engine_url):
             event.listen(self.engine, 'checkin', self.on_checkin)
@@ -396,7 +406,7 @@ class SQLConnectionPool(object):
 
 # ################################################################################################################################
 
-class PoolStore(object):
+class PoolStore:
     """ A main class for accessing all of the SQL connection pools. Each server
     thread has its own store.
     """
@@ -506,12 +516,12 @@ class PoolStore(object):
         """ Invoked when the server is stopping.
         """
         with self._lock:
-            for name, wrapper in self.wrappers.items():
+            for _ignored_name, wrapper in self.wrappers.items():
                 wrapper.pool.engine.dispose()
 
 # ################################################################################################################################
 
-class _Server(object):
+class _Server:
     """ A plain Python object which is used instead of an SQLAlchemy model so the latter is not tied to a session
     for as long a server is up.
     """
@@ -541,6 +551,8 @@ class ODBManager(SessionWrapper):
         self.cluster_id = cluster_id
         self.pool = pool
         self.decrypt_func = decrypt_func
+        self.server = None
+        self.cluster = None
 
 # ################################################################################################################################
 
@@ -683,7 +695,7 @@ class ODBManager(SessionWrapper):
                 SEC_DEF_TYPE.WSS: WSSDefinition,
                 SEC_DEF_TYPE.VAULT: VaultConnection,
                 SEC_DEF_TYPE.XPATH_SEC: XPathSecurity,
-                }
+            }
 
             result = {}
 
@@ -948,7 +960,6 @@ class ODBManager(SessionWrapper):
     def get_service_id_list(self, session, cluster_id, name_list):
         """ Returns a list of IDs matching input service names.
         """
-        # type: (object, int, list)
         return query.service_id_list(session, cluster_id, name_list)
 
 # ################################################################################################################################
@@ -956,7 +967,6 @@ class ODBManager(SessionWrapper):
     def get_service_list_with_include(self, session, cluster_id, include_list, needs_columns=False):
         """ Returns a list of all services from the input include_list.
         """
-        # type: (object, int, list)
         return query.service_list_with_include(session, cluster_id, include_list, needs_columns)
 
 # ################################################################################################################################

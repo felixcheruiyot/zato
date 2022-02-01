@@ -22,6 +22,7 @@ from past.builtins import basestring
 
 # Zato
 from zato.common.api import KVDB as _KVDB, NONCE_STORE
+from zato.common.util import spawn_greenlet
 from zato.common.util.kvdb import has_redis_sentinels
 
 # ################################################################################################################################
@@ -32,29 +33,7 @@ logger = getLogger(__name__)
 # ################################################################################################################################
 # ################################################################################################################################
 
-class LuaContainer(object):
-    """ A class which knows how to add and execute Lua scripts against Redis.
-    """
-    def __init__(self, kvdb=None, initial_programs=None):
-        self.kvdb = kvdb
-        self.lua_programs = {}
-        self.add_initial_lua_programs(initial_programs or {})
-
-    def add_initial_lua_programs(self, programs):
-        for name, program in programs:
-            self.add_lua_program(name, program)
-
-    def add_lua_program(self, name, program):
-        self.lua_programs[name] = self.kvdb.register_script(program)
-
-    def run_lua(self, name, keys=None, args=None):
-        logger.debug('run_lua: name/keys/args:`%s %s %s`, lua_programs:`%s', name, keys, args, self.lua_programs)
-        return self.lua_programs[name](keys or [], args or [])
-
-# ################################################################################################################################
-# ################################################################################################################################
-
-class KVDB(object):
+class KVDB:
     """ A wrapper around the Zato's key-value database.
     """
     def __init__(self, config=None, decrypt_func=None):
@@ -63,9 +42,9 @@ class KVDB(object):
         self.config = config
         self.decrypt_func = decrypt_func
         self.conn_class = None # Introduced so it's easier to test the class
-        self.lua_container = LuaContainer()
-        self.run_lua = self.lua_container.run_lua # So it's more natural to use it
         self.has_sentinel = False
+
+# ################################################################################################################################
 
     def _get_connection_class(self):
         """ Returns a concrete class to create Redis connections off basing on whether we use Redis sentinels or not.
@@ -78,6 +57,8 @@ class KVDB(object):
             from redis import StrictRedis
             return StrictRedis
 
+# ################################################################################################################################
+
     def _parse_sentinels(self, item):
         if item:
             if isinstance(item, basestring):
@@ -85,8 +66,23 @@ class KVDB(object):
             out = []
             for elem in item:
                 elem = elem.split(':')
-                out.append((elem[0], int(elem[1])))
+
+                # This will always exist ..
+                host = elem[0]
+
+                # .. which is why we can always use it ..
+                to_append = [host]
+
+                # .. but port can be optional ..
+                if len(elem) > 1:
+                    port = elem[1]
+                    port = int(port)
+                    to_append.append(port)
+
+                out.append(tuple(to_append))
             return out
+
+# ################################################################################################################################
 
     def init(self):
 
@@ -157,21 +153,46 @@ class KVDB(object):
         else:
             self.conn = self.conn_class(charset='utf-8', decode_responses=True, **config)
 
-        self.lua_container.kvdb = self.conn
+        # Confirm whether we can connect
+        self.ping()
+
+# ################################################################################################################################
 
     def pubsub(self):
         return self.conn.pubsub()
 
+# ################################################################################################################################
+
     def publish(self, *args, **kwargs):
         return self.conn.publish(*args, **kwargs)
 
+# ################################################################################################################################
+
     def subscribe(self, *args, **kwargs):
         return self.conn.subscribe(*args, **kwargs)
+
+# ################################################################################################################################
 
     def translate(self, system1, key1, value1, system2, key2, default=''):
         return self.conn.hget(
             _KVDB.SEPARATOR.join(
                 (_KVDB.TRANSLATION, system1, key1, value1, system2, key2)), 'value2') or default
+
+# ################################################################################################################################
+
+    def reconfigure(self, config):
+        # type: (dict) -> None
+        self.config = config
+        self.init()
+
+# ################################################################################################################################
+
+    def set_password(self, password):
+        # type: (dict) -> None
+        self.config['password'] = password
+        self.init()
+
+# ################################################################################################################################
 
     def copy(self):
         """ Returns an KVDB with the configuration copied over from self. Note that
@@ -184,8 +205,22 @@ class KVDB(object):
 
         return kvdb
 
+# ################################################################################################################################
+
     def close(self):
         self.conn.connection_pool.disconnect()
+
+# ################################################################################################################################
+
+    def ping(self):
+        try:
+            spawn_greenlet(self.conn.ping)
+        except Exception as e:
+            logger.warning('Could not ping %s due to `%s`', self.conn, e.args[0])
+        else:
+            logger.info('Redis ping OK -> %s', self.conn)
+
+# ################################################################################################################################
 
     @staticmethod
     def is_config_enabled(config):

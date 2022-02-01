@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 # stdlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from time import time
 import logging
 
@@ -33,6 +31,20 @@ local_tz = get_localzone()
 
 # ################################################################################################################################
 
+def utc_now():
+    """ Returns current time in UTC with the timezone information included.
+    """
+    return datetime.now(timezone.utc)
+
+# ################################################################################################################################
+
+def native_to_utc(dt):
+    """ Converts a native datetime object to a UTC one.
+    """
+    return dt.replace(tzinfo=timezone.utc)
+
+# ################################################################################################################################
+
 def datetime_to_ms(dt):
     """ Converts a datetime object to a number of milliseconds since UNIX epoch.
     """
@@ -48,36 +60,22 @@ def utcnow_as_ms(_time=time):
 
 # ################################################################################################################################
 
-def datetime_from_ms(ms, isoformat=True):
+def datetime_from_ms(ms:'float', isoformat:'bool'=True) -> 'str | datetime':
     """ Converts a number of milliseconds since UNIX epoch to a datetime object.
     """
     value = _epoch + timedelta(milliseconds=ms)
-    return value.isoformat() if isoformat else value
+    if isoformat:
+        return value.isoformat()
+    else:
+        return value
 
 # ################################################################################################################################
 
-class TimeUtil(object):
+class TimeUtil:
     """ A thin layer around Arrow's date/time handling library customized for our needs.
     Default format is always taken from ISO 8601 (so it's sorted lexicographically)
     and default timezone is always UTC.
     """
-    def __init__(self, kvdb):
-        self.kvdb = kvdb
-
-# ################################################################################################################################
-
-    def get_format_from_kvdb(self, format):
-        """ Returns format stored under a key pointed to by 'format' or raises
-        ValueError if the key is missing/has no value.
-        """
-        key = 'kvdb:date-format:{}'.format(format[5:])
-        format = self.kvdb.conn.get(key)
-        if not format:
-            msg = 'Key `{}` does not exist'.format(key)
-            logger.error(msg)
-            raise ValueError(msg)
-
-        return format
 
 # ################################################################################################################################
 
@@ -119,9 +117,6 @@ class TimeUtil(object):
         if tz != 'UTC':
             today = today.to(tz)
 
-        if format.startswith('kvdb:'):
-            format = self.get_format_from_kvdb(format)
-
         if needs_format:
             return today.format(format)
         else:
@@ -143,12 +138,6 @@ class TimeUtil(object):
         """ Reformats value from one datetime format to another, for instance
         from 23-03-2013 to 03/23/13 (MM-DD-YYYY to DD/MM/YY).
         """
-        if from_.startswith('kvdb:'):
-            from_ = self.get_format_from_kvdb(from_)
-
-        if to.startswith('kvdb:'):
-            to = self.get_format_from_kvdb(to)
-
         try:
             # Arrow compares to str, not basestring
             value = str(value) if isinstance(value, unicode) else value

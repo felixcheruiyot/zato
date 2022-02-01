@@ -63,7 +63,7 @@ HEADER_VALUE_RE = re.compile(r'[\x00-\x1F\x7F]')
 log = logging.getLogger(__name__)
 
 
-class FileWrapper(object):
+class FileWrapper:
 
     def __init__(self, filelike, blksize=8192):
         self.filelike = filelike
@@ -116,7 +116,7 @@ def proxy_environ(req):
     }
 
 
-class Response(object):
+class Response:
 
     def __init__(self, req, sock, cfg):
         self.req = req
@@ -252,7 +252,7 @@ class Response(object):
     def write(self, arg, binary_type=binary_type, util_write=util.write):
         self.send_headers()
         if not isinstance(arg, binary_type):
-            raise TypeError('%r is not a byte' % arg)
+            raise TypeError('{!r} is not a byte'.format(arg))
         arglen = len(arg)
         tosend = arglen
         if self.response_length is not None:

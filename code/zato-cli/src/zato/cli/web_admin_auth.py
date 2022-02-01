@@ -10,12 +10,16 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 # Zato
 from zato.cli import common_totp_opts, ManageCommand
+from zato.common.util.open_ import open_r, open_w
 
 # ################################################################################################################################
 # ################################################################################################################################
 
 class _WebAdminAuthCommand(ManageCommand):
     def _prepare(self, args):
+
+        import pymysql
+        pymysql.install_as_MySQLdb()
 
         # stdlib
         import os
@@ -26,7 +30,7 @@ class _WebAdminAuthCommand(ManageCommand):
 
         os.chdir(os.path.abspath(args.path))
         base_dir = os.path.join(self.original_dir, args.path)
-        config = loads(open(os.path.join(base_dir, '.', 'config/repo/web-admin.conf')).read())
+        config = loads(open_r(os.path.join(base_dir, '.', 'config/repo/web-admin.conf')).read())
         config['config_dir'] = os.path.abspath(args.path)
         update_globals(config, base_dir)
 
@@ -57,14 +61,14 @@ class CreateUser(_WebAdminAuthCommand):
 
     # Class django.contrib.auth.management.commands.createsuperuser.Command needs self.stding and self.stdout
     # so we fake them here.
-    class _FakeStdout(object):
+    class _FakeStdout:
         def __init__(self, logger):
             self.logger = logger
 
         def write(self, msg):
             self.logger.info(msg.strip())
 
-    class _FakeStdin(object):
+    class _FakeStdin:
         def isatty(self):
             return True
 
@@ -87,19 +91,20 @@ class CreateUser(_WebAdminAuthCommand):
                 self.logger.error('Both --username and --email are required if either is provided')
                 sys.exit(self.SYS_ERROR.INVALID_INPUT)
             else:
-                from django.contrib.auth.management.commands.createsuperuser import is_valid_email
+                from django.core.validators import EmailValidator
                 from django.core import exceptions
                 self.reset_logger(self.args, True)
 
                 try:
-                    is_valid_email(email)
+                    validator = EmailValidator()
+                    validator(email)
                 except exceptions.ValidationError:
                     self.logger.error('Invalid e-mail `%s`', email)
                     sys.exit(self.SYS_ERROR.INVALID_INPUT)
                 else:
                     self.is_interactive = False
 
-    def execute(self, args):
+    def execute(self, args, needs_sys_exit=True):
 
         # stdlib
         import sys
@@ -120,7 +125,10 @@ class CreateUser(_WebAdminAuthCommand):
             Command().handle(interactive=self.is_interactive, **options)
         except Exception:
             self.logger.error('Could not create the user, details: `%s`', format_exc())
-            sys.exit(self.SYS_ERROR.INVALID_INPUT)
+            if needs_sys_exit:
+                sys.exit(self.SYS_ERROR.INVALID_INPUT)
+            else:
+                raise
         else:
             self._ok(args)
 
@@ -149,7 +157,7 @@ class UpdatePassword(_WebAdminAuthCommand):
 
         # An optional password tells us if we are to use the Django's command
         # or our own wrapper returning the user-provided password without asking for one.
-        if getattr(args, 'password'):
+        if getattr(args, 'password', None):
             class _Command(Command):
                 def _get_pass(self, *ignored_args, **ignored_kwargs):
                     return args.password
@@ -191,7 +199,7 @@ class ResetTOTPKey(_WebAdminAuthCommand):
         try:
             user = User.objects.get(username=args.username)
         except User.DoesNotExist:
-            self.logger.warn('No such user `%s` found in `%s`', args.username, args.path)
+            self.logger.warning('No such user `%s` found in `%s`', args.username, args.path)
             return
 
         # Here we know we have the user and key for sure, now we need to get the person's profile
@@ -240,7 +248,7 @@ class SetAdminInvokePassword(_WebAdminAuthCommand):
 
         # Read config in
         config_path = os.path.join(repo_dir, 'web-admin.conf')
-        config_data = open(config_path).read()
+        config_data = open_r(config_path).read()
 
         # Encrypted the provided password
         cm = WebAdminCryptoManager(repo_dir=repo_dir)
@@ -256,7 +264,7 @@ class SetAdminInvokePassword(_WebAdminAuthCommand):
 
         # Save config with the updated password
         new_config = '\n'.join(new_config)
-        open(config_path, 'w').write(new_config)
+        open_w(config_path).write(new_config)
 
 # ################################################################################################################################
 # ################################################################################################################################

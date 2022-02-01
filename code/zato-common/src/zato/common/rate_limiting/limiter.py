@@ -53,7 +53,7 @@ RateLimitStateDelete = RateLimitStateTable.delete
 # ################################################################################################################################
 # ################################################################################################################################
 
-class BaseLimiter(object):
+class BaseLimiter:
     """ A per-server, approximate, rate limiter object. It is approximate because it does not keep track
     of what current rate limits in other servers are.
     """
@@ -394,8 +394,7 @@ class Exact(BaseLimiter):
 
     def _get_current_periods(self):
         with closing(self.sql_session_func()) as session:
-            return [elem[0] for elem in current_period_list(session, self.cluster_id).\
-                   all()]
+            return [elem[0] for elem in current_period_list(session, self.cluster_id).all()]
 
 # ################################################################################################################################
 

@@ -98,7 +98,17 @@ class SSOCommand(ZatoCommand):
         def _hash_secret(_secret):
             return crypto_manager.hash_secret(_secret, 'sso.super-user')
 
-        user_api = UserAPI(None, sso_conf, None, crypto_manager.encrypt, crypto_manager.decrypt, _hash_secret, None, new_user_id)
+        user_api = UserAPI(
+            server=None,
+            sso_conf=sso_conf,
+            totp=None,
+            odb_session_func=None,
+            encrypt_func=crypto_manager.encrypt,
+            decrypt_func=crypto_manager.decrypt,
+            hash_func=_hash_secret,
+            verify_hash_func=None,
+            new_user_id_func=new_user_id
+            )
         user_api.post_configure(_get_session, True, False)
 
         return user_api
@@ -119,7 +129,7 @@ class SSOCommand(ZatoCommand):
 
         # This file must exist, otherwise it's not a path to a server
         if not secrets_conf:
-            self.logger.warn('Could not find file `secrets.conf` in `%s`', repo_location)
+            self.logger.warning('Could not find file `secrets.conf` in `%s`', repo_location)
             return self.SYS_ERROR.NOT_A_ZATO_SERVER
 
         user_api = self._get_sso_config(args, repo_location, secrets_conf)
@@ -127,7 +137,7 @@ class SSOCommand(ZatoCommand):
         if self.user_required:
             user = user_api.get_user_by_username(self._get_cid(), args.username)
             if not user:
-                self.logger.warn('No such user `%s`', args.username)
+                self.logger.warning('No such user `%s`', args.username)
                 return self.SYS_ERROR.NO_SUCH_SSO_USER
         else:
             user = None
@@ -171,13 +181,13 @@ class _CreateUser(SSOCommand):
         from zato.sso import ValidationError
 
         if user_api.get_user_by_username('', args.username):
-            self.logger.warn('User already exists `%s`', args.username)
+            self.logger.warning('User already exists `%s`', args.username)
             return self.SYS_ERROR.USER_EXISTS
 
         try:
             user_api.validate_password(args.password)
         except ValidationError as e:
-            self.logger.warn('Password validation error, reason code:`%s`', ', '.join(e.sub_status))
+            self.logger.warning('Password validation error, reason code:`%s`', ', '.join(e.sub_status))
             return self.SYS_ERROR.VALIDATION_ERROR
 
         data = Bunch()
@@ -315,7 +325,7 @@ class ChangeUserPassword(SSOCommand):
         {'name': 'username', 'help': 'User to change the password of'},
         {'name': '--password', 'help': 'New password'},
         {'name': '--expiry', 'help': "Password's expiry in days"},
-        {'name': '--must-change', 'help': "A flag indicating whether the password must be changed on next login", 'type':as_bool},
+        {'name': '--must-change', 'help': 'A flag indicating whether the password must be changed on next login', 'type':as_bool},
     ]
 
     def _on_sso_command(self, args, user, user_api):
@@ -329,7 +339,7 @@ class ChangeUserPassword(SSOCommand):
                 self._get_cid(), user.user_id, args.password, args.must_change, args.expiry, self._get_current_app(),
                 self._get_current_host())
         except ValidationError as e:
-            self.logger.warn('Password validation error, reason code:`%s`', ', '.join(e.sub_status))
+            self.logger.warning('Password validation error, reason code:`%s`', ', '.join(e.sub_status))
             return self.SYS_ERROR.VALIDATION_ERROR
         else:
             self.logger.info('Changed password for user `%s`', args.username)
@@ -342,7 +352,7 @@ class ResetUserPassword(SSOCommand):
     opts = [
         {'name': 'username', 'help': 'User to reset the password of'},
         {'name': '--expiry', 'help': "Password's expiry in hours or days"},
-        {'name': '--must-change', 'help': "A flag indicating whether the password must be changed on next login", 'type':as_bool},
+        {'name': '--must-change', 'help': 'A flag indicating whether the password must be changed on next login', 'type':as_bool},
     ]
 
     def _on_sso_command(self, args, user, user_api):

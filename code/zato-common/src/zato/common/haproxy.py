@@ -15,6 +15,7 @@ from traceback import format_exc
 
 # Zato
 from zato.common.util.api import make_repr, timeouting_popen
+from zato.common.util.open_ import open_r
 
 logger = getLogger(__name__)
 
@@ -24,52 +25,52 @@ HAPROXY_VALIDATE_TIMEOUT = 0.6
 # Statistics commands understood by HAproxy 1.3.x and newer. Note that the
 # command numbers must be consecutively increasing across HAProxy versions.
 haproxy_stats = {
-    ("1", "3"): {
+    ('1', '3'): {
 
         # A special command interpreted by the agent as a request for
         # describing the commands available
-        0: ("ZATO_DESCRIBE_COMMANDS", "Describe commands"),
+        0: ('ZATO_DESCRIBE_COMMANDS', 'Describe commands'),
 
-        1: ("show info", "Show info"),
-        2: ("show stat", "Show stats"),
-        3: ("show errors", "Show errors"),
-        4: ("show sess", "Show sessions"),
+        1: ('show info', 'Show info'),
+        2: ('show stat', 'Show stats'),
+        3: ('show errors', 'Show errors'),
+        4: ('show sess', 'Show sessions'),
     },
-    ("1", "4"): {
+    ('1', '4'): {
     }
 }
 
 # timeout_id -> name, value in milliseconds
 timeouts = {
-    1: (250, "250ms"),
-    2: (500, "500ms"),
-    3: (1000, "1s"),
-    4: (3000, "3s"),
-    5: (5000, "10s"),
-    6: (30000, "30s")
+    1: (250, '250ms'),
+    2: (500, '500ms'),
+    3: (1000, '1s'),
+    4: (3000, '3s'),
+    5: (5000, '10s'),
+    6: (30000, '30s')
 }
 
 http_log = {
-    1: ("nolog", "No log"),
-    2: ("httplog", "HTTP log"),
+    1: ('nolog', 'No log'),
+    2: ('httplog', 'HTTP log'),
 }
 
 tcp_log = {
-    1: ("nolog", "No log"),
-    2: ("tcplog", "TCP log"),
+    1: ('nolog', 'No log'),
+    2: ('tcplog', 'TCP log'),
 }
 
-reversed_http_log = dict((v[0],k) for k,v in http_log.items())
-reversed_tcp_log = dict((v[0],k) for k,v in tcp_log.items())
+reversed_http_log = {v[0]: k for k, v in http_log.items()}
+reversed_tcp_log = {v[0]: k for k, v in tcp_log.items()}
 
-class Config(object):
+class Config:
     """ An object for representing a HAProxy configuration file.
     """
     def __init__(self):
         self.global_ = {}
         self.defaults = {}
         self.backend = {'bck_http_plain': {}}
-        self.frontend = {"front_http_plain": {}}
+        self.frontend = {'front_http_plain': {}}
 
     def __repr__(self):
         return make_repr(self)
@@ -140,7 +141,7 @@ def validate_haproxy_config(config_data, haproxy_command):
             tf.flush()
 
             common_msg = 'config_file:`{}`'
-            common_msg = common_msg.format(open(tf.name).read())
+            common_msg = common_msg.format(open_r(tf.name).read())
 
             timeout_msg = 'HAProxy didn\'t respond in `{}` seconds. '
             rc_non_zero_msg = 'Failed to validate the config file using HAProxy. '

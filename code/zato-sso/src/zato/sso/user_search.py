@@ -36,7 +36,7 @@ name_op_sa = {
 
 # ################################################################################################################################
 
-class OrderBy(object):
+class OrderBy:
     """ Defaults for the SQL ORDER BY clause.
     """
     def __init__(self):
@@ -44,10 +44,10 @@ class OrderBy(object):
         self.desc = 'desc'
 
         # All ORDER BY directions allowed
-        self.dir_allowed = set((self.asc, self.desc))
+        self.dir_allowed = {self.asc, self.desc}
 
         # All columns that results may be ordered by
-        self.out_columns_allowed = set(('display_name', 'username', 'sign_up_time', 'user_id'))
+        self.out_columns_allowed = {'display_name', 'username', 'sign_up_time', 'user_id'}
 
         # How results will be sorted if no user-defined order is given
         self.default = (
@@ -59,7 +59,7 @@ class OrderBy(object):
 
 # ################################################################################################################################
 
-class SSOSearch(object):
+class SSOSearch:
     """ SSO search functions, constants and defaults.
     """
     # Maps publicly visible column names to SQL ones

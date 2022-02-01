@@ -43,12 +43,12 @@ class Create(ZatoCommand):
     """
     opts = deepcopy(common_odb_opts)
 
-    opts.append({'name':'lb_host', 'help':"Load-balancer host"})
-    opts.append({'name':'lb_port', 'help':'Load-balancer port'})
-    opts.append({'name':'lb_agent_port', 'help':'Load-balancer agent host'})
-    opts.append({'name':'broker_host', 'help':"Redis host"})
-    opts.append({'name':'broker_port', 'help':'Redis port'})
     opts.append({'name':'cluster_name', 'help':'Name of the cluster to create'})
+    opts.append({'name':'--lb_host', 'help':'Load-balancer host', 'default':'127.0.0.1'})
+    opts.append({'name':'--lb_port', 'help':'Load-balancer port', 'default':'11223'})
+    opts.append({'name':'--lb_agent_port', 'help':'Load-balancer agent host', 'default':'20151'})
+    opts.append({'name':'--broker_host', 'help':'Redis host (unused, kept for backward compatibility)'})
+    opts.append({'name':'--broker_port', 'help':'Redis port (unused, kept for backward compatibility)'})
     opts.append({'name':'--secret-key', 'help':'Secret key that servers will use for decryption and decryption'})
     opts.append({'name':'--admin-invoke-password', 'help':'Password for web-admin to connect to servers with'})
     opts.append({'name':'--skip-if-exists',
@@ -345,11 +345,11 @@ class Create(ZatoCommand):
         """
 
         # Zato
-        from zato.common.api import SIMPLE_IO
+        from zato.common.api import MISC, SIMPLE_IO
         from zato.common.odb.model import HTTPSOAP
 
         channel = HTTPSOAP(
-            None, 'admin.invoke.json', True, True, 'channel', 'plain_http',
+            None, MISC.DefaultAdminInvokeChannel, True, True, 'channel', 'plain_http',
             None, '/zato/admin/invoke', None, '', None, SIMPLE_IO.FORMAT.JSON, service=service, cluster=cluster,
             security=admin_invoke_sec)
         session.add(channel)
@@ -695,10 +695,11 @@ class Create(ZatoCommand):
         from zato.common.util.time_ import utcnow_as_ms
 
         sec_demo = HTTPBasicAuth(
-            None, 'zato.pubsub.demo.secdef', True, 'zato.pubsub.demo', 'Zato pub/sub demo', self.generate_password(), cluster)
+            None, PUBSUB.DEFAULT.DEMO_SECDEF_NAME, True, PUBSUB.DEFAULT.DEMO_USERNAME,
+            'Zato pub/sub demo', self.generate_password(), cluster)
         session.add(sec_demo)
 
-        sec_default_internal = HTTPBasicAuth(None, 'zato.pubsub.internal.secdef', True, 'zato.pubsub.internal',
+        sec_default_internal = HTTPBasicAuth(None, PUBSUB.DEFAULT.INTERNAL_SECDEF_NAME, True, PUBSUB.DEFAULT.INTERNAL_USERNAME,
             'Zato pub/sub internal', self.generate_password(), cluster)
         session.add(sec_default_internal)
 
@@ -736,7 +737,7 @@ class Create(ZatoCommand):
             cluster=cluster)
 
         outconn_demo = HTTPSOAP(None, 'pubsub.demo.sample.outconn', True, True, CONNECTION.OUTGOING,
-            URL_TYPE.PLAIN_HTTP, 'http://localhost:11223', '/zato/pubsub/zato.demo.sample',
+            URL_TYPE.PLAIN_HTTP, 'http://127.0.0.1:17010', '/zato/pubsub/zato.demo.sample',
             None, '', None, DATA_FORMAT.JSON, security=sec_demo, opaque=opaque,
             cluster=cluster)
 
@@ -879,7 +880,7 @@ class Create(ZatoCommand):
             ['zato.sso.session-attr.session-attr-names', 'zato.server.service.internal.sso.session_attr.SessionAttrNames', '/zato/sso/session/attr/names'],
 
             # Password reset
-            ['zato.sso.password-reset.password-reset', 'zato.server.service.internal.sso.password-reset.PasswordReset', '/zato/sso/password/reset'],
+            ['zato.sso.password-reset.password-reset', 'zato.server.service.internal.sso.password_reset.PasswordReset', '/zato/sso/password/reset'],
         ]
 
         for name, impl_name, url_path in data:

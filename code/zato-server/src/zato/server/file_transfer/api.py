@@ -28,7 +28,7 @@ import globre
 # Zato
 from zato.common.api import FILE_TRANSFER
 from zato.common.util.api import new_cid, spawn_greenlet
-from zato.common.util.platform_ import is_linux, is_other_than_linux
+from zato.common.util.platform_ import is_linux, is_non_linux
 from zato.server.file_transfer.event import FileTransferEventHandler, singleton
 from zato.server.file_transfer.observer.base import BackgroundPathInspector, PathCreatedEvent
 from zato.server.file_transfer.observer.local_ import LocalObserver
@@ -93,7 +93,7 @@ suffix_ignored = (
 # ################################################################################################################################
 # ################################################################################################################################
 
-class FileTransferAPI(object):
+class FileTransferAPI:
     """ Manages file transfer observers and callbacks.
     """
     def __init__(self, server, worker_store):
@@ -171,7 +171,7 @@ class FileTransferAPI(object):
 
             # .. log a warning and disable parsing if no parser was configured when it was expected.
             if not config.parse_with:
-                logger.warn('Parsing is enabled but no parser is declared for file transfer channel `%s` (%s)',
+                logger.warning('Parsing is enabled but no parser is declared for file transfer channel `%s` (%s)',
                     config.name, config.source_type)
                 config.should_parse_on_pickup = False
 
@@ -381,7 +381,7 @@ class FileTransferAPI(object):
             try:
                 spawn_greenlet(self.server.invoke, item, request)
             except Exception:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
 
 # ################################################################################################################################
 
@@ -392,7 +392,7 @@ class FileTransferAPI(object):
             try:
                 spawn_greenlet(self.server.invoke, item, request)
             except Exception:
-                logger.warn(format_exc())
+                logger.warning(format_exc())
 
 # ################################################################################################################################
 
@@ -406,7 +406,7 @@ class FileTransferAPI(object):
 
         if ping_response.status_code != OK:
 
-            logger.warn('Could not ping file transfer connection for `%s` (%s); config:`%s`, r:`%s`, h:`%s`',
+            logger.warning('Could not ping file transfer connection for `%s` (%s); config:`%s`, r:`%s`, h:`%s`',
                 request['full_path'], request['config'].name, item.config, ping_response.text, ping_response.headers)
 
         else:
@@ -427,7 +427,7 @@ class FileTransferAPI(object):
             response = item.conn.post(cid, payload, params, headers=headers) # type: Response
 
             if response.status_code != OK:
-                logger.warn('Could not send file `%s` (%s) to `%s` (p:`%s`, h:`%s`), r:`%s`, h:`%s`',
+                logger.warning('Could not send file `%s` (%s) to `%s` (p:`%s`, h:`%s`), r:`%s`, h:`%s`',
                     request['full_path'], request['config'].name, item.config, params, headers,
                     response.text, response.headers)
 
@@ -472,9 +472,9 @@ class FileTransferAPI(object):
                             observer.event_handler.on_created(PathCreatedEvent(src_path), observer)
 
                     except Exception:
-                        logger.warn('Exception in inotify handler `%s`', format_exc())
+                        logger.warning('Exception in inotify handler `%s`', format_exc())
             except Exception:
-                logger.warn('Exception in inotify.read() `%s`', format_exc())
+                logger.warning('Exception in inotify.read() `%s`', format_exc())
             finally:
                 sleep(0.25)
 
@@ -529,7 +529,7 @@ class FileTransferAPI(object):
                     logger.info('Started file observer `%s` path:`%s`', observer.name, observer.path_list)
 
             except Exception:
-                logger.warn('File observer `%s` could not be started, path:`%s`, e:`%s`',
+                logger.warning('File observer `%s` could not be started, path:`%s`, e:`%s`',
                     observer.name, observer.path_list, format_exc())
 
         # If there are any paths missing for any observer ..
@@ -570,7 +570,7 @@ class FileTransferAPI(object):
         # type: (dict) -> None
 
         # Run background inspectors waiting for each path from the list
-        for path, inspector_list in path_to_inspector_list.items(): # type: (str, list)
+        for _ignored_path, inspector_list in path_to_inspector_list.items(): # type: (str, list)
             for inspector in inspector_list: # type: BackgroundPathInspector
                 inspector.start()
 
@@ -635,7 +635,7 @@ class FileTransferAPI(object):
             if isinstance(e, ValueError):
                 log_func = logger.info
             else:
-                log_func = logger.warn
+                log_func = logger.warning
                 log_func('Could not build relative_dir from `%s` and `%s` (%s)', self.server.base_dir, path, e.args[0])
 
         else:
@@ -676,7 +676,7 @@ class FileTransferAPI(object):
         # type: (Bunch) -> None
 
         # We do not prefer inotify only if we need recursive scans or if we are not under Linux ..
-        if channel_config.is_recursive or is_other_than_linux:
+        if channel_config.is_recursive or is_non_linux:
             return False
 
         # .. otherwise, we prefer inotify.

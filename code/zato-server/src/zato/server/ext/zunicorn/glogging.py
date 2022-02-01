@@ -201,7 +201,7 @@ def parse_syslog_address(addr):
     return (socktype, (host, port))
 
 
-class Logger(object):
+class Logger:
 
     LOG_LEVELS = {
         "critical": logging.CRITICAL,
@@ -230,7 +230,6 @@ class Logger(object):
         self.logfile = None
         self.lock = threading.Lock()
         self.cfg = cfg
-        self.setup(cfg)
 
     def setup(self, cfg):
         self.loglevel = self.LOG_LEVELS.get(cfg.loglevel.lower(), logging.INFO)

@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2020, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from datetime import datetime
@@ -41,7 +39,9 @@ from zato.common.odb.api import SessionWrapper, SQLConnectionPool
 from zato.common.odb.query import search_es_list
 from zato.common.simpleio_ import get_bytes_to_str_encoding, get_sio_server_config, simple_io_conf_contents
 from zato.common.py23_ import maxint
+from zato.common.typing_ import cast_
 from zato.common.util.api import is_port_taken, new_cid
+from zato.common.util.cli import CommandLineServiceInvoker
 from zato.server.service import Service
 
 # Zato - Cython
@@ -53,8 +53,8 @@ from past.builtins import basestring, cmp, unicode, xrange
 # ################################################################################################################################
 
 if 0:
+    from zato.common.typing_ import any_
     from zato.common.util.search import SearchResults
-
     SearchResults = SearchResults
 
 # ################################################################################################################################
@@ -87,7 +87,7 @@ def rand_dict():
     out = {}
     funcs = [rand_bool, rand_int, rand_string]
 
-    for x in range(rand_int(30)):
+    for _x in range(rand_int(30)):
         out[choice(funcs)()] = choice(funcs)()
 
     return out
@@ -98,7 +98,7 @@ def rand_list():
     out = []
     funcs = [rand_bool, rand_int, rand_string]
 
-    for x in range(rand_int(30)):
+    for _x in range(rand_int(30)):
         out.append(choice(funcs)())
 
     return out
@@ -107,7 +107,7 @@ def rand_list():
 
 def rand_list_of_dicts():
     out = []
-    for x in range(rand_int(30)):
+    for _x in range(rand_int(30)):
         out.append(rand_dict())
     return out
 
@@ -120,12 +120,13 @@ rand_nested = rand_opaque
 
 # ################################################################################################################################
 
-def rand_datetime():
-    return datetime.utcnow().isoformat() # Random in the sense of not repeating
+def rand_datetime(to_string=True):
+    value = datetime.utcnow() # Current time is as random any other
+    return value.isoformat() if to_string else value
 
 # ################################################################################################################################
 
-def rand_int(start=1, stop=100, count=1):
+def rand_int(start:'int'=1, stop:'int'=100, count:'int'=1) -> 'any_':
     if count == 1:
         return randint(start, stop)
     else:
@@ -138,16 +139,18 @@ def rand_float(start=1.0, stop=100.0):
 
 # ################################################################################################################################
 
-def rand_string(count=1):
+def rand_string(count=1, prefix='') -> 'any_':
+    prefix = ('-' + prefix + '-') if prefix else ''
+
     if count == 1:
-        return 'a' + uuid4().hex
+        return 'a' + prefix + uuid4().hex
     else:
-        return ['a' + uuid4().hex for x in range(count)]
+        return ['a' + prefix + uuid4().hex for x in range(count)]
 
 # ################################################################################################################################
 
 def rand_unicode():
-    return u'ϠϡϢϣϤϥϦϧϨϩϪϫϬϭ'
+    return 'abc-123-ϠϡϢϣϤϥϦϧϨϩϪϫϬϭ'
 
 # ################################################################################################################################
 
@@ -159,7 +162,7 @@ def rand_object():
 def rand_date_utc(as_string=False):
     value = datetime.utcnow() # Now is as random as any other date
     if as_string:
-        return value.isoformat()
+        return cast_(str, value.isoformat())
     return value
 
 # ################################################################################################################################
@@ -218,7 +221,7 @@ def enrich_with_static_config(object_):
 
 # ################################################################################################################################
 
-class Expected(object):
+class Expected:
     """ A container for the data a test expects the service to return.
     """
     def __init__(self):
@@ -235,7 +238,7 @@ class Expected(object):
 
 # ################################################################################################################################
 
-class FakeBrokerClient(object):
+class FakeBrokerClient:
 
     def __init__(self):
         self.publish_args = []
@@ -252,9 +255,9 @@ class FakeBrokerClient(object):
 
 # ################################################################################################################################
 
-class FakeKVDB(object):
+class FakeKVDB:
 
-    class FakeConn(object):
+    class FakeConn:
         def __init__(self):
             self.setnx_args = None
             self.setnx_return_value = True
@@ -284,13 +287,13 @@ class FakeKVDB(object):
 
 # ################################################################################################################################
 
-class FakeServices(object):
+class FakeServices:
     def __getitem__(self, ignored):
         return {'slow_threshold': 1234}
 
 # ################################################################################################################################
 
-class FakeServiceStore(object):
+class FakeServiceStore:
     def __init__(self, name_to_impl_name=None, impl_name_to_service=None):
         self.services = FakeServices()
         self.name_to_impl_name = name_to_impl_name or {}
@@ -301,7 +304,7 @@ class FakeServiceStore(object):
 
 # ################################################################################################################################
 
-class FakeServer(object):
+class FakeServer:
     """ A fake mock server used in test cases.
     """
     def __init__(self, service_store_name_to_impl_name=None, service_store_impl_name_to_service=None, worker_store=None):
@@ -323,7 +326,7 @@ class FakeServer(object):
 
 # ################################################################################################################################
 
-class SIOElemWrapper(object):
+class SIOElemWrapper:
     """ Makes comparison between two SIOElem elements use their names.
     """
     def __init__(self, value):
@@ -342,11 +345,12 @@ class ServiceTestCase(TestCase):
         self.maxDiff = None
         super(ServiceTestCase, self).__init__(*args, **kwargs)
 
-    def invoke(self, class_, request_data, expected, mock_data={}, channel=CHANNEL.HTTP_SOAP, job_type=None,
+    def invoke(self, class_, request_data, expected, mock_data=None, channel=CHANNEL.HTTP_SOAP, job_type=None,
         data_format=DATA_FORMAT.JSON, service_store_name_to_impl_name=None, service_store_impl_name_to_service=None):
         """ Sets up a service's invocation environment, then invokes and returns
         an instance of the service.
         """
+        mock_data = mock_data or {}
         class_.component_enabled_cassandra = True
         class_.component_enabled_email = True
         class_.component_enabled_search = True
@@ -406,7 +410,7 @@ class ServiceTestCase(TestCase):
 
     def _check_sio_request_input(self, instance, request_data):
         for k, v in request_data.items():
-            self.assertEquals(getattr(instance.request.input, k), v)
+            self.assertEqual(getattr(instance.request.input, k), v)
 
         sio_keys = set(getattr(instance.SimpleIO, 'input_required', []))
         sio_keys.update(set(getattr(instance.SimpleIO, 'input_optional', [])))
@@ -416,8 +420,8 @@ class ServiceTestCase(TestCase):
         self.assertFalse(diff, 'There should be no difference between sio_keys {} and given_keys {}, diff {}'.format(
             sio_keys, given_keys, diff))
 
-    def check_impl(self, service_class, request_data, response_data, response_elem, mock_data={}):
-
+    def check_impl(self, service_class, request_data, response_data, response_elem, mock_data=None):
+        mock_data = mock_data or {}
         expected_data = sorted(response_data.items())
 
         instance = self.invoke(service_class, request_data, None, mock_data)
@@ -579,15 +583,19 @@ class BaseSIOTestCase(TestCase):
 
     def get_server_config(self, needs_response_elem=False):
 
-        with NamedTemporaryFile() as f:
+        with NamedTemporaryFile(delete=False) as f:
             contents = simple_io_conf_contents.format(bytes_to_str_encoding=get_bytes_to_str_encoding())
             if isinstance(contents, unicode):
                 contents = contents.encode('utf8')
             f.write(contents)
             f.flush()
+            temporary_file_name=f.name
 
-            sio_fs_config = ConfigObj(f.name)
-            sio_fs_config = bunchify(sio_fs_config)
+        sio_fs_config = ConfigObj(temporary_file_name)
+        sio_fs_config = bunchify(sio_fs_config)
+
+        import os
+        os.remove(temporary_file_name)
 
         sio_server_config = get_sio_server_config(sio_fs_config)
 
@@ -600,10 +608,29 @@ class BaseSIOTestCase(TestCase):
 
     def get_sio(self, declaration, class_):
 
-        sio = CySimpleIO(self.get_server_config(), declaration)
+        sio = CySimpleIO(None, self.get_server_config(), declaration)
         sio.build(class_)
 
         return sio
+
+# ################################################################################################################################
+# ################################################################################################################################
+
+class CommandLineServiceTestCase(TestCase):
+
+    maxDiff = 1234567890
+
+    def run_zato_test(self, service_name:'str') -> 'None':
+
+        # Prepare the invoker
+        invoker = CommandLineServiceInvoker(check_stdout=False)
+
+        # .. invoke the service and obtain its response ..
+        out = invoker.invoke_and_test(service_name) # type: str
+        out = out.strip()
+
+        # .. make sure that the response indicates a success.
+        self.assertEqual(out, 'OK')
 
 # ################################################################################################################################
 # ################################################################################################################################

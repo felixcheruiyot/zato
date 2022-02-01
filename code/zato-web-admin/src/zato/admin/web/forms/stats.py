@@ -20,7 +20,8 @@ class NForm(forms.Form):
 class CompareForm(forms.Form):
     compare_to = forms.ChoiceField(widget=forms.Select(attrs={'id':'shift'}))
 
-    def __init__(self, compare_to=[], *args, **kwargs):
+    def __init__(self, compare_to=None, *args, **kwargs):
+        compare_to = compare_to or []
         super(CompareForm, self).__init__(*args, **kwargs)
         for name, value in self.fields.items():
             if isinstance(value, forms.ChoiceField):
@@ -37,8 +38,9 @@ class SettingsForm(forms.Form):
     scheduler_raw_times_interval = forms.CharField(widget=forms.TextInput(attrs={'style':'width:20%'}))
     scheduler_raw_times_batch = forms.CharField(widget=forms.TextInput(attrs={'style':'width:20%'}))
     scheduler_per_minute_aggr_interval = forms.CharField(widget=forms.TextInput(attrs={'style':'width:20%'}))
-    atttention_slow_threshold = forms.CharField(widget=forms.TextInput(attrs={'style':'width:20%'}))
-    atttention_top_threshold = forms.CharField(widget=forms.TextInput(attrs={'style':'width:20%'}))
+
+    atttention_slow_threshold = forms.CharField(widget=forms.TextInput(attrs={'style':'width:100px'}))
+    atttention_top_threshold = forms.CharField(widget=forms.TextInput(attrs={'style':'width:100px'}))
 
 class MaintenanceForm(forms.Form):
     """ Statistics maintenance.

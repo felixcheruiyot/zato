@@ -40,7 +40,7 @@ initial_sleep = 0.1
 
 # ################################################################################################################################
 
-class Interval(object):
+class Interval:
     def __init__(self, days=0, hours=0, minutes=0, seconds=0, in_seconds=0):
         self.days = days
         self.hours = hours
@@ -58,7 +58,7 @@ class Interval(object):
 
 # ################################################################################################################################
 
-class Job(object):
+class Job:
     def __init__(self, id, name, type, interval, start_time=None, callback=None, cb_kwargs=None, max_repeats=None,
             on_max_repeats_reached_cb=None, is_active=True, clone_start_time=False, cron_definition=None, service=None,
             extra=None, old_name=None):
@@ -185,7 +185,7 @@ class Job(object):
                 self.max_repeats_reached_at = next_run_time
                 self.keep_running = False
 
-                logger.warn(
+                logger.warning(
                     'Cannot compute start_time. Job `%s` max repeats reached at `%s` (UTC)',
                     self.name, self.max_repeats_reached_at)
 
@@ -247,9 +247,11 @@ class Job(object):
                     self._spawn(self.callback, **{'ctx':self.get_context()})
 
                 except Exception:
-                    logger.warn(format_exc())
+                    logger.warning(format_exc())
 
                 finally:
+                    # pylint: disable=lost-exception
+
                     # Pause the greenlet for however long is needed if it is not a one-off job
                     if self.type == SCHEDULER.JOB_TYPE.ONE_TIME:
                         return True
@@ -259,7 +261,7 @@ class Job(object):
             logger.info('Job leaving main loop `%s` after %d iterations', self, self.current_run)
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
 
         return True
 
@@ -271,11 +273,11 @@ class Job(object):
             # If we are a job that triggers file transfer channels we do not start
             # unless our extra data is filled in. Otherwise, we would not trigger any transfer anyway.
             if self.service == FILE_TRANSFER.SCHEDULER_SERVICE and (not self.extra):
-                logger.warn('Skipped file transfer job `%s` without extra set `%s` (%s)', self.name, self.extra, self.service)
+                logger.warning('Skipped file transfer job `%s` without extra set `%s` (%s)', self.name, self.extra, self.service)
                 return
 
             if not self.start_time:
-                logger.warn('Job `%s` cannot start without start_time set', self.name)
+                logger.warning('Job `%s` cannot start without start_time set', self.name)
                 return
 
             logger.info('Job starting `%s`', self)
@@ -297,11 +299,11 @@ class Job(object):
             self.main_loop()
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
 
 # ################################################################################################################################
 
-class Scheduler(object):
+class Scheduler:
     def __init__(self, config, api):
         self.config = config
         self.api = api
@@ -319,6 +321,7 @@ class Scheduler(object):
         self._add_startup_jobs = config._add_startup_jobs
         self._add_scheduler_jobs = config._add_scheduler_jobs
         self.job_log = getattr(logger, config.job_log_level)
+        self.initial_sleep_time = self.config.main.get('misc', {}).get('initial_sleep_time', SCHEDULER.InitialSleepTime)
 
     def on_max_repeats_reached(self, job):
         with self.lock:
@@ -336,7 +339,7 @@ class Scheduler(object):
             else:
                 logger.info('Skipping inactive job `%s`', job)
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
 
     def create(self, *args, **kwargs):
         with self.lock:
@@ -427,7 +430,7 @@ class Scheduler(object):
                     self.on_job_executed(job.get_context(), False)
                     break
             else:
-                logger.warn('No such job `%s` in `%s`', name, [elem.get_context() for elem in itervalues(self.jobs)])
+                logger.warning('No such job `%s` in `%s`', name, [elem.get_context() for elem in itervalues(self.jobs)])
 
     def on_job_executed(self, ctx, unschedule_one_time=True):
         logger.info('Executing `%s`, `%s`', ctx['name'], ctx)
@@ -450,7 +453,10 @@ class Scheduler(object):
         self.job_greenlets[job.name] = self._spawn(job.run)
 
     def init_jobs(self):
-        sleep(initial_sleep) # To make sure that at least one server is running if the environment was started from quickstart scripts
+
+        # Sleep to make sure that at least one server is running if the environment was started from quickstart scripts
+        sleep(self.initial_sleep_time)
+
         cluster_conf = self.config.main.cluster
         add_startup_jobs(cluster_conf.id, self.odb, self.startup_jobs, asbool(cluster_conf.stats_enabled))
 
@@ -462,7 +468,7 @@ class Scheduler(object):
 
         try:
 
-            logger.info('Scheduler will start to execute jobs in %d seconds', initial_sleep)
+            logger.info('Scheduler will start to execute jobs in %d seconds', self.initial_sleep_time)
 
             # Add default jobs to the ODB and start all of them, the default and user-defined ones
             self.init_jobs()
@@ -472,6 +478,11 @@ class Scheduler(object):
 
             with self.lock:
                 for job in sorted(itervalues(self.jobs)):
+
+                    # Ignore pre-3.2 Redis-based jobs
+                    if job.name.startswith('zato.stats'):
+                        continue
+
                     if job.max_repeats_reached:
                         logger.info('Job `%s` already reached max runs count (%s UTC)', job.name, job.max_repeats_reached_at)
                     else:
@@ -489,4 +500,4 @@ class Scheduler(object):
                     self.iter_cb(*self.iter_cb_args)
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())

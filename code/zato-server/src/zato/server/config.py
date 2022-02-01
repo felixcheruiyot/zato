@@ -42,7 +42,7 @@ logger = getLogger(__name__)
 
 # ################################################################################################################################
 
-class ConfigDict(object):
+class ConfigDict:
     """ Stores configuration of a particular item of interest, such as an
     outgoing HTTP connection. Could've been a dict and we wouldn't have been using
     .get and .set but things like connection names aren't necessarily proper
@@ -265,7 +265,7 @@ class ConfigDict(object):
 
 # ################################################################################################################################
 
-class ConfigStore(object):
+class ConfigStore:
     """ The central place for storing a Zato server's thread configuration.
     May /not/ be shared across threads - each thread should get its own copy
     using the .copy method.
@@ -366,7 +366,7 @@ class ConfigStore(object):
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
             if isinstance(attr, ConfigDict):
-                copy_func = getattr(attr, 'copy')
+                copy_func = attr.copy
                 setattr(config_store, attr_name, copy_func())
             elif attr is ZATO_NONE:
                 setattr(config_store, attr_name, ZATO_NONE)

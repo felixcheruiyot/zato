@@ -12,6 +12,9 @@ import logging.config
 import os
 from uuid import uuid4
 
+# Zato
+from zato.common.util.open_ import open_r
+
 # SQLAlchemy
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy import create_engine
@@ -37,8 +40,12 @@ from zato.admin.zato_settings import *  # NOQA
 
 logging.addLevelName('TRACE1', TRACE1)
 if log_config:
-    with open(log_config) as f:
-        logging.config.dictConfig(yaml.load(f, yaml.FullLoader))
+    with open_r(log_config) as f:
+        try:
+            logging.config.dictConfig(yaml.load(f, yaml.FullLoader))
+        except ValueError:
+            # This will be raised by 'zato quickstart' but we can ignore it
+            pass
 else:
     logging.basicConfig(level=logging.DEBUG)
 
@@ -129,9 +136,10 @@ if 'DATABASES' in globals():
     db_data['db_type'] = db_type
 
     # Crypto
-    ssl_key_file = os.path.abspath(os.path.join(config_dir, SSL_KEY_FILE))
-    ssl_cert_file = os.path.abspath(os.path.join(config_dir, SSL_CERT_FILE))
-    ssl_ca_certs = os.path.abspath(os.path.join(config_dir, SSL_CA_CERTS))
+    if config_dir:
+        ssl_key_file = os.path.abspath(os.path.join(config_dir, SSL_KEY_FILE))
+        ssl_cert_file = os.path.abspath(os.path.join(config_dir, SSL_CERT_FILE))
+        ssl_ca_certs = os.path.abspath(os.path.join(config_dir, SSL_CA_CERTS))
 
     # ODB SQLAlchemy setup
     SASession = scoped_session(sessionmaker())

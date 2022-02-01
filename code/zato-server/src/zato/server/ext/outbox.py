@@ -43,7 +43,7 @@ else:
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Email(object):
+class Email:
     def __init__(self, recipients, subject, body=None, html_body=None, charset='utf8', fields=None, rfc2231=True):
         """
         Object representation of an email. Contains a recipient, subject,
@@ -125,7 +125,7 @@ class Email(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Attachment(object):
+class Attachment:
     """ Attachment for an email.
     """
 
@@ -142,7 +142,7 @@ class Attachment(object):
 # ################################################################################################################################
 # ################################################################################################################################
 
-class Outbox(object):
+class Outbox:
     """ Thin wrapper around the SMTP and SMTP_SSL classes from the smtplib module.
     """
 
@@ -150,8 +150,10 @@ class Outbox(object):
         if mode not in ('SSL', 'TLS', None):
             raise ValueError("Mode must be one of TLS, SSL, or None")
 
-        self.username = username.encode('utf8') if PY2 else username
-        self.password = password.encode('utf8') if PY2 else password
+        server = server.decode('utf8') if isinstance(server, bytes) else server
+
+        self.username = username
+        self.password = password
         self.connection_details = (server, port, mode, debug, timeout)
         self._conn = None
 

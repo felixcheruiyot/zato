@@ -34,7 +34,8 @@ from lxml.etree import _Element as EtreeElementClass, Element, SubElement, tostr
 
 # Zato
 from zato.common.api import APISPEC, DATA_FORMAT, ZATO_NONE
-from zato.common.odb.api import WritableKeyedTuple
+from zato.common.marshal_.api import ElementMissing
+from zato.common.odb.api import SQLRow
 from zato.common.pubsub import PubSubMessage
 from zato.util_convert import to_bool
 
@@ -43,6 +44,12 @@ from zato.bunch import Bunch, bunchify
 
 # Python 2/3 compatibility
 from past.builtins import basestring, str as past_str
+
+# ################################################################################################################################
+
+if 0:
+    from zato.server.base.parallel import ParallelServer
+    ParallelServer = ParallelServer
 
 # ################################################################################################################################
 
@@ -110,13 +117,13 @@ class SIOJSONEncoder(JSONEncoder):
 # ################################################################################################################################
 
 @cy.cclass
-class _ForceEmptyKeyMarker(object):
+class _ForceEmptyKeyMarker:
     pass
 
 # ################################################################################################################################
 
 @cy.cclass
-class _NotGiven(object):
+class _NotGiven:
     """ Indicates that a particular value was not provided on input or output.
     """
     def __str__(self):
@@ -156,7 +163,7 @@ class ServiceInput(Bunch):
 # ################################################################################################################################
 
 @cy.cclass
-class SIODefault(object):
+class SIODefault:
 
     input_value = cy.declare(object, visibility='public') # type: object
     output_value = cy.declare(object, visibility='public') # type: object
@@ -175,7 +182,7 @@ class SIODefault(object):
 # ################################################################################################################################
 
 @cy.cclass
-class SIOSkipEmpty(object):
+class SIOSkipEmpty:
 
     empty_output_value     = cy.declare(object, visibility='public') # type: object
     skip_input_set         = cy.declare(set, visibility='public')    # type: set
@@ -270,7 +277,7 @@ sio_text_type:int = ElemType.text
 # ################################################################################################################################
 
 @cy.cclass
-class Elem(object):
+class Elem:
     """ An individual input or output element. May be a ForceType instance or not.
     """
     _type  = cy.declare(cy.int, visibility='public')     # type: int
@@ -350,7 +357,7 @@ class Elem(object):
     def _get_unicode_name(self, name:object) -> str:
         if name:
             if not isinstance(name, basestring):
-                logger.warn('Name `%s` should be a str/bytes/unicode object rather than `%s`', name, type(name))
+                logger.warning('Name `%s` should be a str/bytes/unicode object rather than `%s`', name, type(name))
             if not isinstance(name, str):
                 name = name.decode('utf8')
 
@@ -880,20 +887,23 @@ class SIO_TYPE_MAP:
 
     class OPEN_API_V3:
 
-        name = APISPEC.OPEN_API_V3
-        STRING = ('string', 'string')
+        name    = APISPEC.OPEN_API_V3
+        STRING  = ('string', 'string')
         DEFAULT = STRING
         INTEGER = ('integer', 'int32')
+        FLOAT   = ('float',   'float')
         BOOLEAN = ('boolean', 'boolean')
+        LIST    = ('array',   'array')
+        DICT    = ('object',  'object')
 
         map = {
             AsIs: STRING,
             Bool: BOOLEAN,
             CSV: STRING,
-            Dict: ('string', 'binary'),
+            Dict: ('object', 'object'),
             Float: ('number', 'float'),
             Int: INTEGER,
-            List: ('string', 'binary'),
+            List: ('array', 'array'),
             DictList: ('string', 'binary'),
             Opaque: ('string', 'binary'),
             Text: STRING,
@@ -902,11 +912,14 @@ class SIO_TYPE_MAP:
 
     class SOAP_12:
 
-        name = APISPEC.SOAP_12
-        STRING = ('string', 'xsd:string')
+        name    = APISPEC.SOAP_12
+        STRING  = ('string', 'xsd:string')
         DEFAULT = STRING
         INTEGER = ('integer', 'xsd:integer')
+        FLOAT   = ('float', 'xsd:float')
         BOOLEAN = ('boolean', 'xsd:boolean')
+        LIST    = ('list', 'zato:list')
+        DICT    = ('dict', 'zato:dict')
 
         map = {
             AsIs: STRING,
@@ -926,11 +939,14 @@ class SIO_TYPE_MAP:
 
     class ZATO:
 
-        name = 'zato'
-        STRING = ('string', 'string')
+        name    = 'zato'
+        STRING  = ('string', 'string')
         DEFAULT = STRING
         INTEGER = ('integer', 'integer')
+        FLOAT   = ('float',   'float')
         BOOLEAN = ('boolean', 'boolean')
+        LIST    = ('list',    'list')
+        DICT    = ('dict',    'dict')
 
         map = {
             AsIs: STRING,
@@ -954,7 +970,7 @@ class SIO_TYPE_MAP:
 # ################################################################################################################################
 
 @cy.cclass
-class ConfigItem(object):
+class ConfigItem:
     """ An individual instance of server-wide SimpleIO configuration. Each subclass covers
     a particular set of exact values, prefixes or suffixes.
     """
@@ -990,7 +1006,7 @@ class SecretConfig(ConfigItem):
 # ################################################################################################################################
 
 @cy.cclass
-class SIOServerConfig(object):
+class SIOServerConfig:
     """ Contains global SIO configuration. Each service's _sio attribute
     will refer to this object so as to have only one place where all the global configuration is kept.
     """
@@ -1056,7 +1072,7 @@ class SIOServerConfig(object):
 # ################################################################################################################################
 
 @cy.cclass
-class SIOList(object):
+class SIOList:
     """ Represents one of input/output required/optional.
     """
     elems         = cy.declare(list, visibility='public') # type: list
@@ -1087,7 +1103,7 @@ class SIOList(object):
 # ################################################################################################################################
 
 @cy.cclass
-class CSVConfig(object):
+class CSVConfig:
     """ Represents CSV configuration that a particular SimpleIO definition uses.
     """
     dialect             = cy.declare(cy.unicode, visibility='public') # type: str
@@ -1104,7 +1120,7 @@ class CSVConfig(object):
 # ################################################################################################################################
 
 @cy.cclass
-class XMLConfig(object):
+class XMLConfig:
     """ Represents XML configuration that a particular SimpleIO definition uses.
     """
     namespace    = cy.declare(object, visibility='public')  # type: object
@@ -1121,7 +1137,7 @@ class XMLConfig(object):
 # ################################################################################################################################
 
 @cy.cclass
-class SIODefinition(object):
+class SIODefinition:
     """ A single SimpleIO definition attached to a service.
     """
     # A list of Elem items required on input
@@ -1301,10 +1317,17 @@ class SIODefinition(object):
 # ################################################################################################################################
 
 @cy.cclass
-class CySimpleIO(object):
+class CySimpleIO:
     """ If a service uses SimpleIO then, during deployment, its class will receive an attribute called _sio
     based on the service's SimpleIO attribute. The _sio one will be an instance of this Cython class.
     """
+
+    # We are not based on dataclasses, unlike DataClassSimpleIO
+    is_dataclass = False
+
+    # A parallel server instance
+    server = cy.declare(object, visibility='public') # type: ParallelServer
+
     # Server-wide configuration
     server_config = cy.declare(SIOServerConfig, visibility='public') # type: SIOServerConfig
 
@@ -1322,7 +1345,7 @@ class CySimpleIO(object):
 
 # ################################################################################################################################
 
-    def __cinit__(self, server_config:SIOServerConfig, user_declaration:object):
+    def __cinit__(self, server:object, server_config:SIOServerConfig, user_declaration:object):
 
         input_value = getattr(user_declaration, 'default_input_value', InternalNotGiven)
         output_value = getattr(user_declaration, 'default_output_value', InternalNotGiven)
@@ -1401,6 +1424,7 @@ class CySimpleIO(object):
             force_empty_output_set, empty_output_value)
 
         self.definition = SIODefinition(sio_default, sio_skip_empty)
+        self.server = server
         self.server_config = server_config
         self.user_declaration = user_declaration
 
@@ -1737,7 +1761,7 @@ class CySimpleIO(object):
         # If there are elements shared by required and optional lists, the ones from the optional list
         # need to be removed, the required ones take priority. The reason for that is that it is common
         # to have a base SimpleIO class with optional elements that are made mandatory in a child class.
-        shared_elems = set(elem.name for elem in required) & set(elem.name for elem in optional)
+        shared_elems = {elem.name for elem in required} & {elem.name for elem in optional}
 
         if shared_elems:
 
@@ -1769,7 +1793,7 @@ class CySimpleIO(object):
 # ################################################################################################################################
 
     @staticmethod
-    def attach_sio(server_config:object, class_:object):
+    def attach_sio(server: object, server_config:object, class_:object):
         """ Given a service class, the method extracts its user-defined SimpleIO definition
         and attaches the Cython-based one to the class's _sio attribute.
         """
@@ -1782,13 +1806,13 @@ class CySimpleIO(object):
                 return
 
             # Attach the Cython object representing the parsed user definition
-            cy_simple_io = CySimpleIO(server_config, user_sio)
-            cy_simple_io.service_class = class_
-            cy_simple_io.build(class_)
-            class_._sio = cy_simple_io
+            sio = CySimpleIO(server, server_config, user_sio)
+            sio.service_class = class_
+            sio.build(class_)
+            class_._sio = sio
 
         except Exception:
-            logger.warn('Could not attach SimpleIO to class `%s`, e:`%s`', class_, format_exc())
+            logger.warning('Could not attach CySimpleIO to class `%s`, e:`%s`', class_, format_exc())
             raise
 
 # ################################################################################################################################
@@ -1831,8 +1855,9 @@ class CySimpleIO(object):
         is_xml:cy.bint  = isinstance(elem, EtreeElementClass)
 
         if not (is_dict or is_xml or is_csv):
-            raise ValueError('Expected a dict, CSV or EtreeElementClass instead of input `{!r}` ({} in {})'.format(
-                elem, type(elem).__name__, self.service_class))
+            logger.debug('Ignoring CySimpleIO input `{%r}` (%s in %s) (not a dict, CSV or EtreeElementClass )',
+                elem, type(elem).__name__, self.service_class)
+            return
 
         # This dictionary holds keys that were common to both 'elem' and 'extra'. If extra exists,
         # and some of the extra keys already exist in elem, this dictionary is populated with such
@@ -1911,8 +1936,13 @@ class CySimpleIO(object):
                     elif is_csv:
                         all_elems = elem
 
-                    raise ValueError('{}; No such input elem `{}` among `{}` in `{}`'.format(
+                    # This goes to logs ..
+                    logger.warning('%s; No such input elem `%s` among `%s` in `%s`' % (
                         self.service_class, sio_item_name, all_elems, elem))
+
+                    # .. while this is potentially returned to users.
+                    raise ElementMissing(sio_item_name)
+
                 else:
                     if self._should_skip_on_input(self.definition, sio_item, input_value):
                         continue
@@ -1928,7 +1958,11 @@ class CySimpleIO(object):
                     if self._should_skip_on_input(self.definition, sio_item, input_value):
                         continue
                     else:
+
                         value = parse_func(input_value)
+                        if getattr(sio_item, 'is_secret', False):
+                            value = self.eval_(sio_item.name, input_value, self.server.encrypt if self.server else None)
+
                 except NotImplementedError:
                     raise NotImplementedError('No parser for input `{}` ({})'.format(input_value, data_format))
 
@@ -1962,7 +1996,7 @@ class CySimpleIO(object):
 # ################################################################################################################################
 
     @cy.returns(object)
-    def parse_input(self, data:object, data_format:cy.unicode, extra:dict=None) -> object:
+    def parse_input(self, data:object, data_format:cy.unicode, service:object=None, extra:dict=None) -> object:
 
         is_csv:cy.bint = data_format == DATA_FORMAT_CSV and isinstance(data, basestring)
 
@@ -2019,7 +2053,7 @@ class CySimpleIO(object):
             elif hasattr(_input_data_dict, 'to_zato'):
                 input_data_dict = _input_data_dict.to_zato()
 
-            elif isinstance(_input_data_dict, WritableKeyedTuple):
+            elif isinstance(_input_data_dict, SQLRow):
                 input_data_dict = _input_data_dict.get_value()
 
             for is_required, current_elems in all_elems: # type: bool, dict

@@ -25,7 +25,7 @@ from zato.common.odb.query import jwt_list
 from zato.common.rate_limiting import DefinitionParser
 from zato.common.util.sql import elems_with_opaque, set_instance_opaque_attrs
 from zato.server.connection.http_soap import Unauthorized
-from zato.server.jwt import JWT as JWTBackend
+from zato.server.jwt_ import JWT as JWTBackend
 from zato.server.service import Boolean, Integer, Service
 from zato.server.service.internal import AdminService, AdminSIO, ChangePasswordBase, GetListAdminSIO
 
@@ -253,7 +253,7 @@ class LogIn(Service):
                 self._raise_unathorized()
 
         except Exception:
-            self.logger.warn(format_exc())
+            self.logger.warning(format_exc())
             self._raise_unathorized()
 
 # ################################################################################################################################
@@ -276,9 +276,9 @@ class LogOut(Service):
             self.response.payload.result = 'No JWT found'
 
         try:
-            JWTBackend(self.kvdb, self.odb, self.server.decrypt, self.server.jwt_secret).delete(token)
+            JWTBackend(self.odb, self.server.decrypt, self.server.jwt_secret).delete(token)
         except Exception:
-            self.logger.warn(format_exc())
+            self.logger.warning(format_exc())
             self.response.status_code = BAD_REQUEST
             self.response.payload.result = 'Token could not be deleted'
 

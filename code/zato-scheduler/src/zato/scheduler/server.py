@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -18,12 +16,23 @@ from bunch import Bunch
 # gevent
 from gevent.pywsgi import WSGIServer
 
+# simdjson
+from simdjson import loads
+
 # Zato
+from zato.broker.client import BrokerClient
 from zato.common.api import ZATO_ODB_POOL_NAME
+from zato.common.broker_message import code_to_name
 from zato.common.crypto.api import SchedulerCryptoManager
 from zato.common.odb.api import ODBManager, PoolStore
 from zato.common.util.cli import read_stdin_data
-from zato.scheduler.api import Scheduler
+from zato.scheduler.api import SchedulerAPI
+
+# ################################################################################################################################
+
+if 0:
+    from zato.client import AnyServiceInvoker
+    AnyServiceInvoker = AnyServiceInvoker
 
 # ################################################################################################################################
 
@@ -31,12 +40,12 @@ logger = logging.getLogger(__name__)
 
 # ################################################################################################################################
 
-ok = b'200 OK'
-headers = [(b'Content-Type', b'application/json')]
+ok = '200 OK'
+headers = [('Content-Type', 'application/json')]
 
 # ################################################################################################################################
 
-class Config(object):
+class Config:
     """ Encapsulates configuration of various scheduler-related layers.
     """
     def __init__(self):
@@ -52,7 +61,7 @@ class Config(object):
 
 # ################################################################################################################################
 
-class SchedulerServer(object):
+class SchedulerServer:
     """ Main class spawning scheduler-related tasks and listening for HTTP API requests.
     """
     def __init__(self, config, repo_location):
@@ -78,33 +87,118 @@ class SchedulerServer(object):
         main = self.config.main
 
         if main.crypto.use_tls:
-            priv_key, cert = main.crypto.priv_key_location, main.crypto.cert_location
+            tls_kwargs = {
+                'keyfile': main.crypto.priv_key_location,
+                'certfile': main.crypto.cert_location
+            }
         else:
-            priv_key, cert = None, None
+            tls_kwargs = {}
+
+        # Configures a client to Zato servers
+        self.zato_client = self.set_up_zato_client(self.config.main)
 
         # API server
-        self.api_server = WSGIServer((main.bind.host, int(main.bind.port)), self, keyfile=priv_key, certfile=cert)
+        self.api_server = WSGIServer((main.bind.host, int(main.bind.port)), self, **tls_kwargs)
 
         self.odb.pool = self.sql_pool_store[ZATO_ODB_POOL_NAME].pool
         self.odb.init_session(ZATO_ODB_POOL_NAME, self.config.main.odb, self.odb.pool, False)
         self.config.odb = self.odb
 
-        # Scheduler
-        self.scheduler = Scheduler(self.config)
+        # SchedulerAPI
+        self.scheduler_api = SchedulerAPI(self.config)
+        self.scheduler_api.broker_client = BrokerClient(zato_client=self.zato_client)
+
+# ################################################################################################################################
+
+    def _set_up_zato_client_by_server_path(self, server_path):
+        # type: (str) -> AnyServiceInvoker
+
+        # Zato
+        from zato.common.util.api import get_client_from_server_conf
+
+        return get_client_from_server_conf(server_path, require_server=False)
+
+# ################################################################################################################################
+
+    def _set_up_zato_client_by_remote_details(self, server_host, server_port, server_username, server_password):
+        # type: (str, int, str, str) -> AnyServiceInvoker
+        pass
+
+# ################################################################################################################################
+
+    def set_up_zato_client(self, config):
+        # type: (Bunch) -> AnyServiceInvoker
+
+        # New in 3.2, hence optional
+        server_config = config.get('server') # type: Bunch
+
+        # We do have server configuration available ..
+        if server_config:
+
+            if server_config.get('server_path'):
+                return self._set_up_zato_client_by_server_path(server_config.server_path)
+            else:
+                server_host = server_config.server_host
+                server_port = server_config.server_port
+                server_username = server_config.server_username
+                server_password = server_config.server_password
+
+                return self._set_up_zato_client_by_remote_details(
+                    server_host,
+                    server_port,
+                    server_username,
+                    server_password
+                )
+
+        # .. no configuration, assume this is a default quickstart cluster.
+        else:
+            # This is what quickstart environments use by default
+            server_path = '/opt/zato/env/qs-1'
+            return self._set_up_zato_client_by_server_path(server_path)
 
 # ################################################################################################################################
 
     def serve_forever(self):
-        self.scheduler.serve_forever()
+        self.scheduler_api.serve_forever()
         self.api_server.serve_forever()
+
+# ################################################################################################################################
+
+    def handle_api_request(self, data):
+        # type: (bytes) -> None
+
+        # Convert to a Python dict ..
+        data = loads(data)
+
+        # .. callback functions expect Bunch instances on input ..
+        data = Bunch(data) # type: ignore
+
+        # .. look up the action we need to invoke ..
+        action_name = code_to_name[data['action']] # type: ignore
+
+        # .. convert it to an actual method to invoke ..
+        func_name = 'on_broker_msg_{}'.format(action_name)
+        func = getattr(self.scheduler_api, func_name)
+
+        # .. finally, invoke the function with the input data.
+        func(data)
 
 # ################################################################################################################################
 
     def __call__(self, env, start_response):
         try:
+            request = env['wsgi.input'].read()
+
+            if request:
+                return_data = '{}\n'
+                self.handle_api_request(request)
+            else:
+                return_data = ''
+
             start_response(ok, headers)
-            return [b'{}\n']
+            return return_data
+
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
 
 # ################################################################################################################################

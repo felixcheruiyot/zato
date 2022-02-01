@@ -78,6 +78,7 @@ from zato.server.pubsub.task import PubSubTool
 if 0:
     from zato.common.audit_log import DataEvent
     from zato.common.model.wsx import WSXConnectorConfig
+    from zato.common.typing_ import callable_
     from zato.server.base.parallel import ParallelServer
 
     DataEvent = DataEvent
@@ -86,7 +87,7 @@ if 0:
 
 # ################################################################################################################################
 
-_supported_json_dumps = set(['stdlib', 'zato_default', 'rapidjson', 'bson', 'orjson'])
+_supported_json_dumps = {'stdlib', 'zato_default', 'rapidjson', 'bson', 'orjson'}
 
 # ################################################################################################################################
 
@@ -143,12 +144,15 @@ _audit_msg_type = WEB_SOCKET.AUDIT_KEY
 # ################################################################################################################################
 
 log_msg_max_size = 1024
+_interact_update_interval = WEB_SOCKET.DEFAULT.INTERACT_UPDATE_INTERVAL
 
 # ################################################################################################################################
 
-class HookCtx(object):
-    __slots__ = ('hook_type', 'config', 'pub_client_id', 'ext_client_id', 'ext_client_name', 'connection_time', 'user_data',
-        'forwarded_for', 'forwarded_for_fqdn', 'peer_address', 'peer_host', 'peer_fqdn', 'peer_conn_info_pretty', 'msg')
+class HookCtx:
+    __slots__ = (
+        'hook_type', 'config', 'pub_client_id', 'ext_client_id', 'ext_client_name', 'connection_time', 'user_data',
+        'forwarded_for', 'forwarded_for_fqdn', 'peer_address', 'peer_host', 'peer_fqdn', 'peer_conn_info_pretty', 'msg'
+    )
 
     def __init__(self, hook_type, *args, **kwargs):
         self.hook_type = hook_type
@@ -158,7 +162,7 @@ class HookCtx(object):
 
 # ################################################################################################################################
 
-class TokenInfo(object):
+class TokenInfo:
     def __init__(self, value, ttl, _now=datetime.utcnow):
         self.value = value
         self.ttl = ttl
@@ -301,7 +305,7 @@ class WebSocket(_WebSocket):
         # point but they are never seen again, which may (theoretically) happen if a peer disconnects
         # in a way that does not allow for Zato to clean up its subscription status in the ODB.
         #
-        self.pubsub_interact_interval = WEB_SOCKET.DEFAULT.INTERACT_UPDATE_INTERVAL
+        self.pubsub_interact_interval = _interact_update_interval
         self.interact_last_updated = None
         self.last_interact_source = None
         self.interact_last_set = None
@@ -411,7 +415,12 @@ class WebSocket(_WebSocket):
 
 # ################################################################################################################################
 
-    def set_last_interaction_data(self, source, _now=datetime.utcnow, _interval=WEB_SOCKET.DEFAULT.INTERACT_UPDATE_INTERVAL):
+    def set_last_interaction_data(
+        self,
+        source, # type: str
+        _now=datetime.utcnow, # type: callable_
+        _interval=_interact_update_interval # type: int
+        ) -> 'None':
         """ Updates metadata regarding pub/sub about this WSX connection.
         """
         with self.update_lock:
@@ -750,9 +759,10 @@ class WebSocket(_WebSocket):
 
                         _ts_before_invoke = _now()
 
-                        logger.info('Tok ext0: [%s / %s] ts:%s exp:%s -> %s',
-                            self.token.value, self.pub_client_id, _ts_before_invoke, self.token.expires_at,
-                             _ts_before_invoke > self.token.expires_at)
+                        if logger_has_debug:
+                            logger.info('Tok ext0: [%s / %s] ts:%s exp:%s -> %s',
+                                self.token.value, self.pub_client_id, _ts_before_invoke, self.token.expires_at,
+                                _ts_before_invoke > self.token.expires_at)
 
                         response = self.invoke_client(new_cid(), None, use_send=False)
                     except ConnectionError as e:
@@ -770,15 +780,17 @@ class WebSocket(_WebSocket):
                             self.pings_missed = 0
                             self.ping_last_response_time = _timestamp
 
-                            logger.info('Tok ext1: [%s / %s] ts:%s exp:%s -> %s',
-                                self.token.value, self.pub_client_id, _timestamp, self.token.expires_at,
-                                _timestamp > self.token.expires_at)
+                            if logger_has_debug:
+                                logger.info('Tok ext1: [%s / %s] ts:%s exp:%s -> %s',
+                                    self.token.value, self.pub_client_id, _timestamp, self.token.expires_at,
+                                    _timestamp > self.token.expires_at)
 
                             self.token.extend(ping_interval)
 
-                            logger.info('Tok ext2: [%s / %s] ts:%s exp:%s -> %s',
-                                self.token.value, self.pub_client_id, _timestamp, self.token.expires_at,
-                                _timestamp > self.token.expires_at)
+                            if logger_has_debug:
+                                logger.info('Tok ext2: [%s / %s] ts:%s exp:%s -> %s',
+                                    self.token.value, self.pub_client_id, _timestamp, self.token.expires_at,
+                                    _timestamp > self.token.expires_at)
 
                         else:
                             self.pings_missed += 1
@@ -837,7 +849,7 @@ class WebSocket(_WebSocket):
 
 # ################################################################################################################################
 
-    def on_pings_missed(self, reason):
+    def on_pings_missed(self):
         logger.warning(
             'Peer %s (%s) missed %s/%s pings, forcing its connection to close (%s)',
             self._peer_address, self._peer_fqdn, self.pings_missed, self.pings_missed_threshold,
@@ -958,8 +970,13 @@ class WebSocket(_WebSocket):
             service_response = self.invoke_service(self.config.service_name, msg.data, cid=cid)
         except Exception as e:
 
+            # This goes to WSX logs, without a full traceback
             logger.warning('Service `%s` could not be invoked, id:`%s` cid:`%s`, conn:`%s`, e:`%s`',
                 self.config.service_name, msg.id, cid, self.peer_conn_info_pretty, format_exc())
+
+            # This goes to server.log and has a full traceback
+            logger_zato.warning('Service `%s` could not be invoked, id:`%s` cid:`%s`, conn:`%s`, e:`%s`',
+                self.config.service_name, msg.id, cid, self.peer_conn_info_pretty, e)
 
             # Errors known to map to HTTP ones
             if isinstance(e, Reportable):
@@ -993,7 +1010,7 @@ class WebSocket(_WebSocket):
                 _msg = 'Service response discarded (client disconnected), cid:`%s`, msg.meta:`%s`'
                 _meta = msg.get_meta()
                 logger.warning(_msg, _meta)
-                logger_zato.warn(_msg, _meta)
+                logger_zato.warning(_msg, _meta)
 
 # ################################################################################################################################
 
@@ -1023,7 +1040,7 @@ class WebSocket(_WebSocket):
             if not hook:
                 log_msg = 'Ignoring pub/sub response, on_pubsub_response hook not implemented for `%s`, conn:`%s`, msg:`%s`'
                 logger.warning(log_msg, self.config.name, self.peer_conn_info_pretty, msg)
-                logger_zato.warn(log_msg, self.config.name, self.peer_conn_info_pretty, msg)
+                logger_zato.warning(log_msg, self.config.name, self.peer_conn_info_pretty, msg)
             else:
                 request = self._get_hook_request()
                 request['msg'] = msg
@@ -1059,8 +1076,8 @@ class WebSocket(_WebSocket):
             except UnicodeDecodeError as e:
                 reason = 'Invalid UTF-8 bytes'
                 msg = '{}; `{}`'.format(reason, e.args)
-                logger.warn(msg)
-                logger_zato.warn(msg)
+                logger.warning(msg)
+                logger_zato.warning(msg)
                 if self.has_session_opened:
                     response = ErrorResponse('<no-cid>', '<no-msg-id>', UNPROCESSABLE_ENTITY, reason)
                     log_msg = 'About to send the invalid UTF-8 message to client'
@@ -1121,8 +1138,8 @@ class WebSocket(_WebSocket):
                 except RuntimeError as e:
                     if e.args[0] == _cannot_send:
                         msg = 'Ignoring message (socket terminated #1), cid:`%s`, request:`%s` conn:`%s`'
-                        logger.warn(msg, cid, request, self.peer_conn_info_pretty)
-                        logger_zato.warn(msg, cid, request, self.peer_conn_info_pretty)
+                        logger.warning(msg, cid, request, self.peer_conn_info_pretty)
+                        logger_zato.warning(msg, cid, request, self.peer_conn_info_pretty)
                     else:
                         raise
 
@@ -1607,6 +1624,8 @@ class ChannelWebSocket(Connector):
 
 if __name__ == '__main__':
 
+    # noqa
+
     # stdlib
     import os
     from logging import basicConfig, INFO, WARN
@@ -1745,7 +1764,7 @@ if __name__ == '__main__':
             for name, connector in web_socket_api.connectors.items(): # type: (str, Connector)
                 report = connector.get_conn_report()
                 print('*', name, report)
-                '''
+                ''' # noqa: Q001
 
 # ################################################################################################################################
 # ################################################################################################################################

@@ -73,6 +73,7 @@ class status_code:
         super_user_required   = 'E005005'
         no_such_sign_up_token = 'E005006'
         sign_up_confirmed     = 'E005007'
+        totp_missing          = 'E005008'
 
     class metadata:
         not_allowed = 'E006001'
@@ -143,7 +144,13 @@ class ValidationError(Exception):
 
 # ################################################################################################################################
 
-class SearchCtx(object):
+class InvalidTOTPError(ValidationError):
+    """ Raised if any input TOTP code is invalid for user.
+    """
+
+# ################################################################################################################################
+
+class SearchCtx:
     """ A container for SSO user search parameters.
     """
     __slots__ = ('user_id', 'username', 'email', 'display_name', 'first_name', 'middle_name', 'last_name', 'sign_up_status',
@@ -171,7 +178,7 @@ class SearchCtx(object):
 
 # ################################################################################################################################
 
-class SignupCtx(object):
+class SignupCtx:
     """ A container for SSO user signup parameters.
     """
     __slots__ = ('username', 'email', 'password', 'current_app', 'app_list', 'sign_up_status')
@@ -196,15 +203,15 @@ class SignupCtx(object):
 
 # ################################################################################################################################
 
-class User(object):
+class User:
     """ Represents a user managed by SSO.
     """
     __slots__ = ('approval_status', 'approval_status_mod_by', 'approval_status_mod_time','attr', 'creation_ctx', 'display_name',
         'email', 'first_name', 'is_active', 'is_approval_needed', 'is_internal', 'is_locked', 'is_super_user',
         'last_name', 'locked_by', 'locked_time', 'middle_name', 'password_expiry', 'password_is_set', 'password_last_set',
         'password_must_change', 'sign_up_status', 'sign_up_time', 'user_id', 'username', 'is_rate_limit_active',
-        'rate_limit_def', 'rate_limit_type', 'rate_limit_check_parent_def', 'is_totp_enabled', 'totp_label', 'status',
-        'is_current_super_user')
+        'rate_limit_def', 'rate_limit_type', 'rate_limit_check_parent_def', 'is_totp_enabled', 'totp_key', 'totp_label',
+        'status', 'is_current_super_user')
 
     def __init__(self):
         self.approval_status = None
@@ -237,6 +244,7 @@ class User(object):
         self.rate_limit_type = None
         self.rate_limit_check_parent_def = None
         self.is_totp_enabled = None
+        self.totp_key = None
         self.totp_label = None
         self.status = None
 
@@ -244,11 +252,11 @@ class User(object):
         self.is_current_super_user = False
 
     def to_dict(self):
-        return dict((name, getattr(self, name)) for name in self.__slots__ if name != 'attr')
+        return {name: getattr(self, name) for name in self.__slots__ if name != 'attr'}
 
 # ################################################################################################################################
 
-class Session(object):
+class Session:
     """ Represents a session opened by a particular SSO user.
     """
     __slots__ = ('attr', 'creation_time', 'expiration_time', 'remote_addr', 'user_agent')
@@ -261,6 +269,6 @@ class Session(object):
         self.user_agent = None
 
     def to_dict(self):
-        return dict((name, getattr(self, name)) for name in self.__slots__ if name != 'attr')
+        return {name: getattr(self, name) for name in self.__slots__ if name != 'attr'}
 
 # ################################################################################################################################

@@ -19,6 +19,11 @@ from bunch import Bunch
 
 # ################################################################################################################################
 
+if 0:
+    from zato.common.ext.imbox import Imbox
+
+# ################################################################################################################################
+
 # SQL ODB
 engine_def = '{engine}://{username}:{password}@{host}:{port}/{db_name}'
 engine_def_sqlite = 'sqlite:///{sqlite_path}'
@@ -49,6 +54,7 @@ DONT_DEPLOY_ATTR_NAME = 'zato_dont_import'
 # A convenient constant used in several places, simplifies passing around
 # arguments which are, well, not given (as opposed to being None, an empty string etc.)
 ZATO_NOT_GIVEN = b'ZATO_NOT_GIVEN'
+ZatoNotGiven = b'ZatoNotGiven'
 
 # Separates command line arguments in shell commands.
 CLI_ARG_SEP = 'ZATO_ZATO_ZATO'
@@ -88,11 +94,13 @@ simple_types = (bytes, str, dict, list, tuple, bool, Number)
 # ################################################################################################################################
 # ################################################################################################################################
 
-generic_attrs = ('is_rate_limit_active', 'rate_limit_type', 'rate_limit_def', 'rate_limit_check_parent_def',
+generic_attrs = (
+    'is_rate_limit_active', 'rate_limit_type', 'rate_limit_def', 'rate_limit_check_parent_def',
     'is_audit_log_sent_active', 'is_audit_log_received_active', 'max_len_messages_sent', 'max_len_messages_received',
     'max_bytes_per_message_sent', 'max_bytes_per_message_received', 'hl7_version', 'json_path', 'data_encoding',
     'max_msg_size', 'read_buffer_size', 'recv_timeout', 'logging_level', 'should_log_messages', 'start_seq', 'end_seq',
-    'max_wait_time')
+    'max_wait_time'
+)
 
 # ################################################################################################################################
 # ################################################################################################################################
@@ -308,7 +316,7 @@ class MSG_SOURCE:
 class NameId:
     """ Wraps both an attribute's name and its ID.
     """
-    def __init__(self, name, id=None):
+    def __init__(self, name:'str', id:'str'=None):
         self.name = name
         self.id = id or name
 
@@ -519,6 +527,12 @@ class KVDB(Attrs):
 
 class SCHEDULER:
 
+    InitialSleepTime = 0.1
+    DefaultHost = '127.0.0.1'
+    DefaultPort = 31530
+    EmbeddedIndicator      = 'zato_embedded'
+    EmbeddedIndicatorBytes = EmbeddedIndicator.encode('utf8')
+
     class JOB_TYPE(Attrs):
         ONE_TIME = 'one_time'
         INTERVAL_BASED = 'interval_based'
@@ -616,6 +630,7 @@ class MISC:
     OAUTH_SIG_METHODS = ['HMAC-SHA1', 'PLAINTEXT']
     PIDFILE = 'pidfile'
     SEPARATOR = ':::'
+    DefaultAdminInvokeChannel = 'admin.invoke.json'
 
 # ################################################################################################################################
 # ################################################################################################################################
@@ -734,6 +749,7 @@ class HTTP_SOAP_SERIALIZATION_TYPE:
 
 class PUBSUB:
 
+    SUBSCRIBE_CLASS: '_PUBSUB_SUBSCRIBE_CLASS'
     SKIPPED_PATTERN_MATCHING = '<skipped>'
 
     # All float values are converted to strings of that precision
@@ -794,9 +810,16 @@ class PUBSUB:
         TASK_DELIVERY_INTERVAL = 2000
         WAIT_TIME_SOCKET_ERROR = 10
         WAIT_TIME_NON_SOCKET_ERROR = 3
-        INTERNAL_ENDPOINT_NAME = 'zato.pubsub.default.internal.endpoint'
         ON_NO_SUBS_PUB = 'accept'
         SK_OPAQUE = ('deliver_to_sk', 'reply_to_sk')
+        UnsubOnWSXClose = True
+
+        DEMO_SECDEF_NAME = 'zato.pubsub.demo.secdef'
+        DEMO_USERNAME = 'zato.pubsub.demo'
+
+        INTERNAL_USERNAME = 'zato.pubsub.internal'
+        INTERNAL_SECDEF_NAME = 'zato.pubsub.internal.secdef'
+        INTERNAL_ENDPOINT_NAME = 'zato.pubsub.default.internal.endpoint'
 
     class SERVICE_SUBSCRIBER:
         NAME = 'zato.pubsub.service.endpoint'
@@ -884,8 +907,15 @@ class PUBSUB:
         WEB_SOCKETS = NameId('WebSockets', 'wsx')
 
         def __iter__(self):
-            return iter((self.AMQP.id, self.INTERNAL.id, self.REST.id, self.SERVICE.id, self.SOAP.id,
-                self.WEB_SOCKETS.id, self.SERVICE.id))
+            return iter((
+                self.AMQP.id,
+                self.INTERNAL.id,
+                self.REST.id,
+                self.SERVICE.id,
+                self.SOAP.id,
+                self.WEB_SOCKETS.id,
+                self.SERVICE.id
+            ))
 
     class REDIS:
         META_TOPIC_LAST_KEY = 'zato.ps.meta.topic.last.%s.%s'
@@ -909,7 +939,7 @@ class _PUBSUB_SUBSCRIBE_CLASS:
     }
 
     @staticmethod
-    def get(name):
+    def get(name:'str'):
         return _PUBSUB_SUBSCRIBE_CLASS.classes[name]
 
 # ################################################################################################################################
@@ -1180,6 +1210,14 @@ class AMQP:
 
         def __iter__(self):
             return iter((self.ACK, self.REJECT))
+
+# ################################################################################################################################
+# ################################################################################################################################
+
+class REDIS:
+    class DEFAULT:
+        PORT = 6379
+        DB = 0
 
 # ################################################################################################################################
 # ################################################################################################################################
@@ -1561,6 +1599,54 @@ class HotDeploy:
 # ################################################################################################################################
 # ################################################################################################################################
 
+class ZatoKVDB:
+
+    SlowResponsesName  = 'zato.service.slow_responses'
+    UsageSamplesName   = 'zato.service.usage_samples'
+    CurrentUsageName   = 'zato.service.current_usage'
+    PubSubMetadataName = 'zato.pubsub.metadata'
+
+    SlowResponsesPath  = SlowResponsesName  + '.json'
+    UsageSamplesPath   = UsageSamplesName   + '.json'
+    CurrentUsagePath   = CurrentUsageName   + '.json'
+    PubSubMetadataPath = PubSubMetadataName + '.json'
+
+    DefaultSyncThreshold = 3_000
+    DefaultSyncInterval  = 3
+
+# ################################################################################################################################
+# ################################################################################################################################
+
+class Stats:
+
+    # This is in milliseconds, for how long do we keep old statistics in persistent storage. Defaults to two years.
+    # 1k ms * 60 s * 60 min * 24 hours * 365 days * 2 years = 94_608_000_000 milliseconds (or two years).
+    # We use milliseconds because that makes it easier to construct tests.
+    MaxRetention = 1000 * 60 * 60 * 24 * 365 * 2
+
+    # By default, statistics will be aggregated into time buckets of that duration
+    DefaultAggrTimeFreq = '5min' # Five minutes
+
+    # We always tabulate by object_id (e.g. service name)
+    TabulateAggr = 'object_id'
+
+# ################################################################################################################################
+# ################################################################################################################################
+
+class StatsKey:
+    CurrentValue = 'current_value'
+
+    PerKeyMin   = 'min'
+    PerKeyMax   = 'max'
+    PerKeyMean  = 'mean'
+
+    PerKeyValue         = 'value'
+    PerKeyLastTimestamp = 'last_timestamp'
+    PerKeyLastDuration  = 'last_duration'
+
+# ################################################################################################################################
+# ################################################################################################################################
+
 class SSO:
     class EmailTemplate:
         SignupConfirm = 'signup-confirm.txt'
@@ -1641,7 +1727,8 @@ class StatsElem:
         self.temp_mean = 0
         self.temp_mean_count = 0
 
-    def get_attrs(self, ignore=[]):
+    def get_attrs(self, ignore=None):
+        ignore = ignore or []
         for attr in dir(self):
             if attr.startswith('__') or attr.startswith('temp_') or callable(getattr(self, attr)) or attr in ignore:
                 continue
@@ -1724,8 +1811,8 @@ class IDEDeploy:
 
 class IMAPMessage:
     def __init__(self, uid, conn, data):
-        self.uid = uid
-        self.conn = conn
+        self.uid = uid   # type: str
+        self.conn = conn # type: Imbox
         self.data = data
 
     def __repr__(self):
@@ -1801,6 +1888,7 @@ default_internal_modules = {
     'zato.server.service.internal.outgoing.ftp': True,
     'zato.server.service.internal.outgoing.jms_wmq': True,
     'zato.server.service.internal.outgoing.odoo': True,
+    'zato.server.service.internal.outgoing.redis': True,
     'zato.server.service.internal.outgoing.sql': True,
     'zato.server.service.internal.outgoing.sap': True,
     'zato.server.service.internal.outgoing.sftp': True,
@@ -1864,3 +1952,6 @@ default_internal_modules = {
     'zato.server.service.internal.stats.trends': True,
     'zato.server.service.internal.updates': True,
 }
+
+# ################################################################################################################################
+# ################################################################################################################################

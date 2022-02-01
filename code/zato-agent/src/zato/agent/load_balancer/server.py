@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -17,9 +15,10 @@ from collections import Counter
 from datetime import datetime
 from http.client import OK
 from traceback import format_exc
+from typing import Callable
 
 # pytz
-from pytz import UTC
+from pytz import utc
 
 # YAML
 import yaml
@@ -36,22 +35,27 @@ from zato.common.haproxy import haproxy_stats, validate_haproxy_config
 from zato.common.py23_.spring_ import RequestHandler, SimpleXMLRPCServer, SSLServer
 from zato.common.repo import RepoManager
 from zato.common.util.api import get_lb_agent_json_config, timeouting_popen
+from zato.common.util.open_ import open_r
 
 public_method_prefix = '_lb_agent_'
 config_file = 'zato.config'
 
-logger = logging.getLogger("")
-logging.addLevelName('TRACE1', TRACE1)
+logger = logging.getLogger('')
+logging.addLevelName(TRACE1, 'TRACE1')
 
 # All known HAProxy commands
 haproxy_commands = {}
-for version, commands in haproxy_stats.items():
+for _ignored_version, commands in haproxy_stats.items():
     haproxy_commands.update(commands)
 
 # ################################################################################################################################
 # ################################################################################################################################
 
-class BaseLoadBalancerAgent(object):
+class BaseLoadBalancerAgent:
+
+    # This is implemented by children classes
+    register_function: Callable
+
     def init_config(self, repo_dir):
 
         self.repo_dir = os.path.abspath(repo_dir)
@@ -68,12 +72,13 @@ class BaseLoadBalancerAgent(object):
         self.haproxy_pidfile = os.path.abspath(os.path.join(self.repo_dir, '../', '../', MISC.PIDFILE))
 
         log_config = os.path.abspath(os.path.join(self.repo_dir, self.json_config['log_config']))
-        with open(log_config) as f:
-            logging.config.dictConfig(yaml.load(f, yaml.FullLoader))
+        with open_r(log_config) as f:
+            data = yaml.load(f, yaml.FullLoader) # type: dict
+            logging.config.dictConfig(data) # pyright: reportGeneralTypeIssues=false
 
         self.config_path = os.path.join(self.repo_dir, config_file)
         self.config = self._read_config()
-        self.start_time = datetime.utcnow().replace(tzinfo=UTC).isoformat()
+        self.start_time = datetime.utcnow().replace(tzinfo=utc).isoformat()
         self.haproxy_stats = HAProxyStats(self.config.global_['stats_socket'])
 
         RepoManager(self.repo_dir).ensure_repo_consistency()
@@ -85,9 +90,10 @@ class BaseLoadBalancerAgent(object):
 
 # ################################################################################################################################
 
-    def _re_start_load_balancer(self, timeout_msg, rc_non_zero_msg, additional_params=[]):
+    def _re_start_load_balancer(self, timeout_msg, rc_non_zero_msg, additional_params=None):
         """ A common method for (re-)starting HAProxy.
         """
+        additional_params = additional_params or []
         command = [self.haproxy_command, '-D', '-f', self.config_path, '-p', self.haproxy_pidfile]
         command.extend(additional_params)
         timeouting_popen(command, 5.0, timeout_msg, rc_non_zero_msg)
@@ -104,17 +110,11 @@ class BaseLoadBalancerAgent(object):
     def restart_load_balancer(self):
         """ Restarts the HAProxy load balancer without disrupting existing connections.
         """
-        additional_params = ['-sf', open(self.haproxy_pidfile).read().strip()]
-        self._re_start_load_balancer("Could not restart in `{}` seconds. ", 'Failed to restart HAProxy. ', additional_params)
-
-# ################################################################################################################################
-
-    def _dispatch(self, method, params):
-        try:
-            return super(BaseLoadBalancerAgent, self)._dispatch(method, params)
-        except Exception as e:
-            logger.error(format_exc())
-            raise e
+        additional_params = [
+            '-sf',
+            open_r(self.haproxy_pidfile).read().strip()
+        ]
+        self._re_start_load_balancer('Could not restart in `{}` seconds. ', 'Failed to restart HAProxy. ', additional_params)
 
 # ################################################################################################################################
 
@@ -129,7 +129,7 @@ class BaseLoadBalancerAgent(object):
                 public_name = item.split(public_method_prefix)[1]
                 attr = getattr(self, item)
                 msg = 'Registering `{attr}` under public name `{public_name}`'
-                logger.info(msg.format(attr=attr, public_name=public_name))  # TODO: Add logging config
+                logger.info(msg.format(attr=attr, public_name=public_name))
                 self.register_function(attr, public_name)
 
 # ################################################################################################################################
@@ -137,7 +137,7 @@ class BaseLoadBalancerAgent(object):
     def _read_config_string(self):
         """ Returns the HAProxy config as a string.
         """
-        return open(self.config_path).read()
+        return open_r(self.config_path).read()
 
 # ################################################################################################################################
 
@@ -157,8 +157,7 @@ class BaseLoadBalancerAgent(object):
         """ Save a new HAProxy config file on disk. It is assumed the file
         has already been validated.
         """
-        # TODO: Use local git repo here
-        f = open(self.config_path, 'wb')
+        f = open_r(self.config_path, 'wb')
         f.write(config_string.encode('utf8'))
         f.close()
 
@@ -216,7 +215,7 @@ class BaseLoadBalancerAgent(object):
         """ Validate or validates /and/ saves (if 'save' flag is True) an HAProxy
         configuration. Note that the validation step is always performed.
         """
-        config_string = string_from_config(lb_config, open(self.config_path).readlines())
+        config_string = string_from_config(lb_config, open_r(self.config_path).readlines())
         return self._validate_save_config_string(config_string, save)
 
 # ################################################################################################################################
@@ -283,7 +282,7 @@ class BaseLoadBalancerAgent(object):
         """
         if old_name == new_name:
             msg = 'Skipped renaming, old_name:[{}] is the same as new_name:[{}]'.format(old_name, new_name)
-            self.logger.warn(msg)
+            self.logger.warning(msg)
             return True
 
         new_config = []
@@ -365,7 +364,7 @@ class BaseLoadBalancerAgent(object):
 
 # ################################################################################################################################
 
-    def _lb_agent_execute_command(self, command, timeout, extra=""):
+    def _lb_agent_execute_command(self, command, timeout, extra=''):
         """ Execute an HAProxy command through its UNIX socket interface.
         """
         command = haproxy_commands[int(command)][0]

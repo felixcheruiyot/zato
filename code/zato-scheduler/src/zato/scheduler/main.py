@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # First thing in the process
 from gevent import monkey
@@ -29,12 +27,16 @@ import yaml
 from future.utils import iteritems
 
 # Zato
-from zato.common.util.api import absjoin, get_config, store_pidfile
+from zato.common.util.api import as_bool, absjoin, get_config, store_pidfile
+from zato.common.util.open_ import open_r
 from zato.scheduler.server import Config, SchedulerServer
 
 # ################################################################################################################################
 
 def main():
+
+    if 'ZATO_SCHEDULER_BASE_DIR' in os.environ:
+        os.chdir(os.environ['ZATO_SCHEDULER_BASE_DIR'])
 
     # Always attempt to store the PID file first
     store_pidfile(os.path.abspath('.'))
@@ -46,12 +48,13 @@ def main():
     repo_location = os.path.join('.', 'config', 'repo')
 
     # Logging configuration
-    with open(os.path.join(repo_location, 'logging.conf')) as f:
+    with open_r(os.path.join(repo_location, 'logging.conf')) as f:
         dictConfig(yaml.load(f, yaml.FullLoader))
 
     # Read config in and extend it with ODB-specific information
     config.main = get_config(repo_location, 'scheduler.conf')
     config.main.odb.fs_sql_config = get_config(repo_location, 'sql.conf', needs_user_config=False)
+    config.main.crypto.use_tls = as_bool(config.main.crypto.use_tls)
 
     # Make all paths absolute
     if config.main.crypto.use_tls:
@@ -72,7 +75,7 @@ def main():
     try:
         SchedulerServer(config, repo_location).serve_forever()
     except Exception:
-        logger.warn(format_exc())
+        logger.warning(format_exc())
 
 # ################################################################################################################################
 

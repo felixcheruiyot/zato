@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 # Zato
 from zato.cli import ZatoCommand
+from zato.common.util.open_ import open_w
 
 # ################################################################################################################################
 
@@ -77,6 +76,7 @@ class APISpec(ZatoCommand):
             'exclude': ','.join(exclude),
             'needs_api_invoke': args.with_api_invoke,
             'needs_rest_channels': args.with_rest_channels,
+            'needs_sphinx': True,
             'tags': tags,
         }
 
@@ -96,7 +96,7 @@ class APISpec(ZatoCommand):
                 self.logger.info('Deleting %s', out_dir)
                 rmtree(out_dir)
             else:
-                self.logger.warn('Output directory %s already exists and --delete-dir was not provided', out_dir)
+                self.logger.warning('Output directory %s already exists and --delete-dir was not provided', out_dir)
                 return
 
         os.mkdir(out_dir)
@@ -113,8 +113,8 @@ class APISpec(ZatoCommand):
                 pass # Must have been already created
             finally:
                 if contents:
-                    f = open(full_file_path, 'w')
-                    f.write(contents)
+                    f = open_w(full_file_path)
+                    _ = f.write(contents)
                     f.close()
 
         self.logger.info('Output saved to %s', out_dir)

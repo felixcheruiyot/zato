@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+# ################################################################################################################################
+
+# Zato
+from zato.common.util.open_ import open_r, open_w
 
 # ################################################################################################################################
 
@@ -26,10 +29,10 @@ _opts_odb_port = 'Operational database port'
 _opts_odb_user = 'Operational database user'
 _opts_odb_schema = 'Operational database schema'
 _opts_odb_db_name = 'Operational database name'
-_opts_broker_host = 'Broker host'
-_opts_broker_port = 'Broker port'
-_opts_kvdb_host = 'Key/value DB host'
-_opts_kvdb_port = 'Key/value DB port'
+_opts_broker_host = 'Broker host (unused)'
+_opts_broker_port = 'Broker port (unused)'
+_opts_kvdb_host = 'Key/value DB host (unused)'
+_opts_kvdb_port = 'Key/value DB port (unused)'
 
 # ################################################################################################################################
 
@@ -50,13 +53,13 @@ default_common_name = 'localhost'
 # ################################################################################################################################
 
 common_odb_opts = [
-    {'name':'odb_type', 'help':_opts_odb_type, 'choices':SUPPORTED_DB_TYPES}, # noqa
+    {'name':'--odb_type', 'help':_opts_odb_type, 'choices':SUPPORTED_DB_TYPES, 'default':'sqlite'}, # noqa
     {'name':'--odb_host', 'help':_opts_odb_host},
     {'name':'--odb_port', 'help':_opts_odb_port},
     {'name':'--odb_user', 'help':_opts_odb_user},
     {'name':'--odb_db_name', 'help':_opts_odb_db_name},
     {'name':'--postgresql_schema', 'help':_opts_odb_schema + ' (PostgreSQL only)'},
-    {'name':'--odb_password', 'help':'ODB database password'},
+    {'name':'--odb_password', 'help':'ODB database password', 'default':''},
 ]
 
 common_ca_create_opts = [
@@ -74,220 +77,12 @@ common_totp_opts = [
 ]
 
 kvdb_opts = [
-    {'name':'kvdb_host', 'help':_opts_kvdb_host},
-    {'name':'kvdb_port', 'help':_opts_kvdb_port},
+    {'name':'--kvdb_host', 'help':_opts_kvdb_host},
+    {'name':'--kvdb_port', 'help':_opts_kvdb_port},
     {'name':'--kvdb_password', 'help':'Key/value database password'},
 ]
 
 # ################################################################################################################################
-
-common_logging_conf_contents = """
-loggers:
-    '':
-        level: INFO
-        handlers: [stdout, default]
-    'gunicorn.main':
-        level: INFO
-        handlers: [stdout, default]
-    zato:
-        level: INFO
-        handlers: [stdout, default]
-        qualname: zato
-        propagate: false
-    zato_access_log:
-        level: INFO
-        handlers: [http_access_log]
-        qualname: zato_access_log
-        propagate: false
-    zato_admin:
-        level: INFO
-        handlers: [admin]
-        qualname: zato_admin
-        propagate: false
-    zato_audit_pii:
-        level: INFO
-        handlers: [stdout, audit_pii]
-        qualname: zato_audit_pii
-        propagate: false
-    zato_connector:
-        level: INFO
-        handlers: [connector]
-        qualname: zato_connector
-        propagate: false
-    zato_hl7:
-        level: INFO
-        handlers: [stdout, hl7]
-        qualname: zato_hl7
-        propagate: false
-    zato_kvdb:
-        level: INFO
-        handlers: [kvdb]
-        qualname: zato_kvdb
-        propagate: false
-    zato_pubsub:
-        level: INFO
-        handlers: [stdout, pubsub]
-        qualname: zato_pubsub
-        propagate: false
-    zato_pubsub_overflow:
-        level: INFO
-        handlers: [pubsub_overflow]
-        qualname: zato_pubsub_overflow
-        propagate: false
-    zato_pubsub_audit:
-        level: INFO
-        handlers: [pubsub_audit]
-        qualname: zato_pubsub_audit
-        propagate: false
-    zato_rbac:
-        level: INFO
-        handlers: [rbac]
-        qualname: zato_rbac
-        propagate: false
-    zato_scheduler:
-        level: INFO
-        handlers: [stdout, scheduler]
-        qualname: zato_scheduler
-        propagate: false
-    zato_web_socket:
-        level: INFO
-        handlers: [stdout, web_socket]
-        qualname: zato_web_socket
-        propagate: false
-    zato_ibm_mq:
-        level: INFO
-        handlers: [stdout, ibm_mq]
-        qualname: zato_ibm_mq
-        propagate: false
-    zato_notif_sql:
-        level: INFO
-        handlers: [stdout, notif_sql]
-        qualname: zato_notif_sql
-        propagate: false
-handlers:
-    default:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/server.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    stdout:
-        formatter: colour
-        class: logging.StreamHandler
-        stream: ext://sys.stdout
-    http_access_log:
-        formatter: http_access_log
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/http_access.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    admin:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/admin.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    audit_pii:
-        formatter: default
-        class: logging.handlers.RotatingFileHandler
-        filename: './logs/audit-pii.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    connector:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/connector.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    hl7:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/hl7.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    kvdb:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/kvdb.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    pubsub:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/pubsub.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    pubsub_overflow:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/pubsub-overflow.log'
-        mode: 'a'
-        maxBytes: 200000000
-        backupCount: 50
-    pubsub_audit:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/pubsub-audit.log'
-        mode: 'a'
-        maxBytes: 200000000
-        backupCount: 50
-    rbac:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/rbac.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    scheduler:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/scheduler.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    web_socket:
-        formatter: default
-        class: logging.handlers.ConcurrentRotatingFileHandler
-        filename: './logs/web_socket.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    ibm_mq:
-        formatter: default
-        class: logging.handlers.RotatingFileHandler
-        filename: './logs/ibm-mq.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-    notif_sql:
-        formatter: default
-        class: logging.handlers.RotatingFileHandler
-        filename: './logs/notif-sql.log'
-        mode: 'a'
-        maxBytes: 20000000
-        backupCount: 10
-
-formatters:
-    audit_pii:
-        format: '%(message)s'
-    default:
-        format: '%(asctime)s - %(levelname)s - %(process)d:%(threadName)s - %(name)s:%(lineno)d - %(message)s'
-    http_access_log:
-        format: '%(remote_ip)s %(cid_resp_time)s "%(channel_name)s" [%(req_timestamp)s] "%(method)s %(path)s %(http_version)s" %(status_code)s %(response_size)s "-" "%(user_agent)s"'
-    colour:
-        format: '%(asctime)s - %(levelname)s - %(process)d:%(threadName)s - %(name)s:%(lineno)d - %(message)s'
-        (): zato.common.util.api.ColorFormatter
-
-version: 1
-""" # noqa: E501
 
 sql_conf_contents = """
 # ######### ######################## ######### #
@@ -350,10 +145,11 @@ command_imports = (
     ('hash_get_rounds', 'zato.cli.crypto.GetHashRounds'),
     ('hl7_mllp_send', 'zato.cli.hl7_.MLLPSend'),
     ('info', 'zato.cli.info.Info'),
-    ('set_ide_password', 'zato.cli.ide.SetIDEPassword'),
+    ('openapi', 'zato.cli.openapi_.OpenAPI'),
     ('reset_totp_key', 'zato.cli.web_admin_auth.ResetTOTPKey'),
     ('quickstart_create', 'zato.cli.quickstart.Create'),
     ('service_invoke', 'zato.cli.service.Invoke'),
+    ('set_ide_password', 'zato.cli.ide.SetIDEPassword'),
     ('set_admin_invoke_password', 'zato.cli.web_admin_auth.SetAdminInvokePassword'),
     ('sso_change_user_password', 'zato.cli.sso.ChangeUserPassword'),
     ('sso_create_odb', 'zato.cli.sso.CreateODB'),
@@ -399,7 +195,7 @@ def run_command(args):
 
 # ################################################################################################################################
 
-class ZatoCommand(object):
+class ZatoCommand:
     """ A base class for all Zato CLI commands. Handles common things like parsing
     the arguments, checking whether a config file or command line switches should
     be used, asks for passwords etc.
@@ -407,7 +203,6 @@ class ZatoCommand(object):
     needs_empty_dir = False
     file_needed = None
     needs_secrets_confirm = True
-    allow_empty_secrets = False
     add_config_file = True
     target_dir = None
     show_output = True
@@ -415,7 +210,7 @@ class ZatoCommand(object):
 
 # ################################################################################################################################
 
-    class SYS_ERROR(object):
+    class SYS_ERROR:
         """ All non-zero sys.exit return codes the commands may use.
         """
         ODB_EXISTS = 1
@@ -451,9 +246,9 @@ class ZatoCommand(object):
 
 # ################################################################################################################################
 
-    class COMPONENTS(object):
+    class COMPONENTS:
 
-        class _ComponentName(object):
+        class _ComponentName:
             def __init__(self, code, name):
                 self.code = code
                 self.name = name
@@ -488,6 +283,19 @@ class ZatoCommand(object):
         # because subprocesses will not be able to do it once we read it all in in the parent
         # one, so we read it here and give other processes explicitly on input, if they need it.
         self.stdin_data = read_stdin_data()
+
+# ################################################################################################################################
+
+    def allow_empty_secrets(self):
+        return False
+
+# ################################################################################################################################
+
+    def get_arg(self, name, default=''):
+        if hasattr(self.args, 'get'):
+            return self.args.get(name) or default
+        else:
+            return getattr(self.args, name, default)
 
 # ################################################################################################################################
 
@@ -550,10 +358,9 @@ class ZatoCommand(object):
         # stdlib
         from getpass import getpass
 
-        keep_running = True
         self.logger.info('')
 
-        while keep_running:
+        while True:
             secret1 = getpass(template + ' (will not echo): ')
             if not needs_confirm:
                 return secret1.strip('\n')
@@ -624,7 +431,7 @@ class ZatoCommand(object):
                 'created_ts': datetime.utcnow().isoformat(), # noqa
                 'component': component
                 }
-        open(os.path.join(target_dir, ZATO_INFO_FILE), 'w').write(dumps(info))
+        open_w(os.path.join(target_dir, ZATO_INFO_FILE)).write(dumps(info))
 
 # ################################################################################################################################
 
@@ -649,7 +456,7 @@ class ZatoCommand(object):
 
         body = '# {} - {}\n{}'.format(now, self._get_user_host(), file_args.getvalue())
 
-        open(file_name, 'w').write(body)
+        open_w(file_name).write(body)
         file_args.close()
 
         self.logger.debug('Options saved in file {file_name}'.format(
@@ -693,10 +500,16 @@ class ZatoCommand(object):
 
             # It is OK if password is an empty string and empty secrets are allowed
             if not password_arg:
-                if self.allow_empty_secrets:
+
+                if isinstance(self.allow_empty_secrets, bool):
+                    allow_empty = self.allow_empty_secrets
+                else:
+                    allow_empty = self.allow_empty_secrets()
+
+                if allow_empty:
                     continue
 
-                password = self._get_secret(opt_help, self.needs_secrets_confirm, self.allow_empty_secrets, opt_name)
+                password = self._get_secret(opt_help, self.needs_secrets_confirm, allow_empty, opt_name)
                 setattr(args, opt_name, password)
 
         return args
@@ -709,7 +522,7 @@ class ZatoCommand(object):
 
 # ################################################################################################################################
 
-    def run(self, args, offer_save_opts=True, work_args=None):
+    def run(self, args, offer_save_opts=True, work_args=None, needs_sys_exit=True):
         """ Parses the command line or the args passed in and figures out
         whether the user wishes to use a config file or command line switches.
         """
@@ -722,15 +535,18 @@ class ZatoCommand(object):
             # Do we need to have a clean directory to work in?
             if self.needs_empty_dir:
                 work_dir = os.path.abspath(args.path)
+
+                if not os.path.exists(work_dir):
+                    self.logger.info('Creating directory `%s`', work_dir)
+                    os.makedirs(work_dir)
+
                 for elem in os.listdir(work_dir):
                     if elem.startswith('zato') and elem.endswith('config'):
                         # This is a zato.{}.config file. The had been written there
                         # before we got to this point and it's OK to skip it.
                         continue
                     else:
-                        msg = ('Directory {} is not empty, please re-run the command ' + # noqa
-                              'in an empty directory').format(work_dir) # noqa
-                        self.logger.info(msg)
+                        self.logger.info('Directory `%s` is not empty, please choose a different one or empty it out', work_dir)
                         sys.exit(self.SYS_ERROR.DIR_NOT_EMPTY) # noqa
 
             # Do we need the directory to contain any specific files?
@@ -765,10 +581,11 @@ class ZatoCommand(object):
             # https://github.com/zatosource/zato/issues/328
 
             return_code = self.execute(args)
-            if isinstance(return_code, int):
-                sys.exit(return_code)
-            else:
-                sys.exit(0)
+            if needs_sys_exit:
+                if isinstance(return_code, int):
+                    sys.exit(return_code)
+                else:
+                    sys.exit(0)
 
         except Exception as e:
             self.reset_logger(self.args)
@@ -869,7 +686,7 @@ class FromConfig(ZatoCommand):
     def execute(self, args):
         """ Runs the command with arguments read from a config file.
         """
-        f = open(args.path)
+        f = open_r(args.path)
         for line in f:
             if line.lstrip().startswith('#'):
                 continue
@@ -914,7 +731,7 @@ class CACreateCommand(ZatoCommand):
         import tempfile
 
         now = self._get_now()
-        openssl_template = open(os.path.join(self.target_dir, 'ca-material/openssl-template.conf')).read()
+        openssl_template = open_r(os.path.join(self.target_dir, 'ca-material', 'openssl-template.conf')).read()
 
         ou_attrs = ('organizational_unit', 'organizational-unit')
         template_args = {}
@@ -937,6 +754,23 @@ class CACreateCommand(ZatoCommand):
         template_args['common_name'] = self._get_arg(args, 'common_name', default_common_name)
         template_args['target_dir'] = self.target_dir
 
+        template_args['ca_serial'] = '$dir/ca-material/ca-serial'
+        template_args['ca_certindex'] = '$dir/ca-material/ca-certindex'
+        template_args['target_dir_rel'] = '$dir'
+        template_args['ca_key'] = '$dir/ca-material/ca-cert.pem'
+        template_args['private_key'] = '$dir/ca-material/ca-key.pem'
+
+        import platform
+        system = platform.system()
+        is_windows = 'windows' in system.lower()
+
+        if is_windows:
+            template_args['ca_serial'] = os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-serial')).replace('\\','/')
+            template_args['ca_certindex'] = os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-certindex')).replace('\\','/')
+            template_args['target_dir_rel'] = os.path.relpath(self.target_dir).replace('\\','/')
+            template_args['ca_key'] = os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-cert.pem')).replace('\\','/')
+            template_args['private_key'] = os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-key.pem')).replace('\\','/')
+
         f = tempfile.NamedTemporaryFile(mode='w+') # noqa
         f.write(openssl_template.format(**template_args))
         f.flush()
@@ -952,10 +786,10 @@ class CACreateCommand(ZatoCommand):
 
         file_args['file_prefix'] = self.get_file_prefix(file_args)
 
-        csr_name = '{target_dir}/out-csr/{file_prefix}-csr-{now}.pem'.format(**file_args)
-        priv_key_name = '{target_dir}/out-priv/{file_prefix}-priv-{now}.pem'.format(**file_args)
-        pub_key_name = '{target_dir}/out-pub/{file_prefix}-pub-{now}.pem'.format(**file_args)
-        cert_name = '{target_dir}/out-cert/{file_prefix}-cert-{now}.pem'.format(**file_args)
+        csr_name = os.path.join(self.target_dir, 'out-csr', '{file_prefix}-csr-{now}.pem'.format(**file_args))
+        priv_key_name = os.path.join(self.target_dir, 'out-priv', '{file_prefix}-priv-{now}.pem'.format(**file_args))
+        pub_key_name = os.path.join(self.target_dir, 'out-pub', '{file_prefix}-pub-{now}.pem'.format(**file_args))
+        cert_name = os.path.join(self.target_dir, 'out-cert', '{file_prefix}-cert-{now}.pem'.format(**file_args))
 
         format_args = {
             'config': f.name,
@@ -964,44 +798,45 @@ class CACreateCommand(ZatoCommand):
             'priv_key_name': priv_key_name,
             'pub_key_name': pub_key_name,
             'cert_name': cert_name,
-            'target_dir': self.target_dir
+            'target_dir': self.target_dir,
+            'ca_password': os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-password'))
         }
+        if is_windows:
+            format_args['ca_password'] = os.path.relpath(os.path.join(self.target_dir, 'ca-material', 'ca-password')).replace('\\','\\\\')
 
         # Create the CSR and keys ..
         cmd = """openssl req -batch -new -nodes -extensions {extension} \
                   -out {csr_name} \
                   -keyout {priv_key_name} \
                   -pubkey \
-                  -newkey rsa:2048 -config {config} \
-                  >/dev/null 2>&1""".format(**format_args)
+                  -newkey rsa:2048 -config {config} """.format(**format_args)
         os.system(cmd)
 
         # .. note that we were using "-pubkey" flag above so we now have to extract
         # the public key from the CSR.
 
         split_line = '-----END PUBLIC KEY-----'
-        csr_pub = open(csr_name).read()
+        csr_pub = open_r(csr_name).read()
         csr_pub = csr_pub.split(split_line)
 
         pub = csr_pub[0] + split_line
         csr = csr_pub[1].lstrip()
 
-        open(csr_name, 'w').write(csr)
-        open(pub_key_name, 'w').write(pub)
+        open_w(csr_name).write(csr)
+        open_w(pub_key_name).write(pub)
 
         # Generate the certificate
-        cmd = """openssl ca -batch -passin file:{target_dir}/ca-material/ca-password -config {config} \
+        cmd = """openssl ca -batch -passin file:{ca_password} -config {config} \
                  -out {cert_name} \
                  -extensions {extension} \
-                 -in {csr_name} \
-                  >/dev/null 2>&1""".format(**format_args)
+                 -in {csr_name}""".format(**format_args)
 
         os.system(cmd)
         f.close()
 
-        # Now delete the default certificate stored in './', we don't really
-        # need it because we have its copy in './out-cert' anyway.
-        last_serial = open(os.path.join(self.target_dir, 'ca-material/ca-serial.old')).read().strip()
+        # Now delete the default certificate stored in '.\', we don't really
+        # need it because we have its copy in '.\out-cert' anyway.
+        last_serial = open_r(os.path.join(self.target_dir, 'ca-material', 'ca-serial.old')).read().strip()
         os.remove(os.path.join(self.target_dir, last_serial + '.pem'))
 
         msg = """Crypto material generated and saved in:
@@ -1038,7 +873,7 @@ class ManageCommand(ZatoCommand):
             self.COMPONENTS.SCHEDULER.code: self._on_scheduler,
         }
 
-    command_files = set([ZATO_INFO_FILE])
+    command_files = {ZATO_INFO_FILE}
 
 # ################################################################################################################################
 
@@ -1052,6 +887,8 @@ class ManageCommand(ZatoCommand):
 # ################################################################################################################################
 
     def execute(self, args):
+
+        # pylint: disable=attribute-defined-outside-init
 
         # stdlib
         import os
@@ -1074,7 +911,7 @@ class ManageCommand(ZatoCommand):
             sys.exit(self.SYS_ERROR.NOT_A_ZATO_COMPONENT) # noqa
 
         found = list(found)[0]
-        json_data = load(open(os.path.join(self.component_dir, found)))
+        json_data = load(open_r(os.path.join(self.component_dir, found)))
 
         os.chdir(self.component_dir)
 

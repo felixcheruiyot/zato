@@ -30,7 +30,7 @@ from zato.common.util.api import parse_tls_channel_security_definition, update_a
 from zato.common.util.auth import on_basic_auth, on_wsse_pwd, WSSE
 from zato.common.util.url_dispatcher import get_match_target
 from zato.server.connection.http_soap import Forbidden, Unauthorized
-from zato.server.jwt import JWT
+from zato.server.jwt_ import JWT
 from zato.url_dispatcher import CyURLData, Matcher
 
 # ################################################################################################################################
@@ -50,7 +50,7 @@ if PY2:
     from oauth.oauth import OAuthDataStore, OAuthConsumer, OAuthRequest, OAuthServer, OAuthSignatureMethod_HMAC_SHA1, \
          OAuthSignatureMethod_PLAINTEXT, OAuthToken
 else:
-    class _Placeholder(object):
+    class _Placeholder:
         def __init__(self, *ignored_args, **ignored_kwargs):
             pass
 
@@ -73,7 +73,7 @@ _internal_url_path_indicator = '{}/zato/'.format(MISC.SEPARATOR)
 # ################################################################################################################################
 # ################################################################################################################################
 
-class OAuthStore(object):
+class OAuthStore:
     def __init__(self, oauth_config):
         self.oauth_config = oauth_config
 
@@ -86,8 +86,7 @@ class URLData(CyURLData, OAuthDataStore):
     def __init__(self, worker, channel_data=None, url_sec=None, basic_auth_config=None, jwt_config=None, ntlm_config=None, \
                  oauth_config=None, wss_config=None, apikey_config=None, aws_config=None, \
                  xpath_sec_config=None, tls_channel_sec_config=None, tls_key_cert_config=None, \
-                 vault_conn_sec_config=None, kvdb=None, broker_client=None, odb=None, json_pointer_store=None, xpath_store=None,
-                 jwt_secret=None, vault_conn_api=None):
+                 vault_conn_sec_config=None, kvdb=None, broker_client=None, odb=None, jwt_secret=None, vault_conn_api=None):
         super(URLData, self).__init__(channel_data)
 
         self.worker = worker # type: WorkerStore
@@ -114,9 +113,6 @@ class URLData(CyURLData, OAuthDataStore):
         self.sec_config_getter[SEC_DEF_TYPE.BASIC_AUTH] = self.basic_auth_get
         self.sec_config_getter[SEC_DEF_TYPE.APIKEY] = self.apikey_get
         self.sec_config_getter[SEC_DEF_TYPE.JWT] = self.jwt_get
-
-        self.json_pointer_store = json_pointer_store
-        self.xpath_store = xpath_store
 
         self.url_sec_lock = RLock()
         self.update_lock = RLock()
@@ -559,7 +555,7 @@ class URLData(CyURLData, OAuthDataStore):
                     vault_response = self._vault_conn_check_headers(client, wsgi_environ, sec_def_config)
 
         except Exception:
-            logger.warn(format_exc())
+            logger.warning(format_exc())
             if enforce_auth:
                 self._enforce_vault_sec(cid, sec_def.name)
             else:
@@ -576,7 +572,7 @@ class URLData(CyURLData, OAuthDataStore):
 # ################################################################################################################################
 
     def check_rbac_delegated_security(self, sec, cid, channel_item, path_info, payload, wsgi_environ, post_data, worker_store,
-            sep=MISC.SEPARATOR, plain_http=URL_TYPE.PLAIN_HTTP, _empty_client_def=tuple()):
+            sep=MISC.SEPARATOR, plain_http=URL_TYPE.PLAIN_HTTP, _empty_client_def=tuple()): # noqa: C408
 
         auth_result = False
 
@@ -621,7 +617,7 @@ class URLData(CyURLData, OAuthDataStore):
         if auth_result:
             return auth_result
         else:
-            logger.warn('None of RBAC definitions allowed request in, cid:`%s`', cid)
+            logger.warning('None of RBAC definitions allowed request in, cid:`%s`', cid)
 
             # We need to return 401 Unauthorized but we need to send a challenge, i.e. authentication type
             # that this channel can be accessed through so we as the last resort, we invoke a hook
@@ -686,7 +682,7 @@ class URLData(CyURLData, OAuthDataStore):
                     if delete:
                         del self.url_sec[target_match]
                     else:
-                        for key, new_value in msg.items():
+                        for key, _ignored_new_value in msg.items():
                             if key in sec_def:
                                 sec_def[key] = msg[key]
 
@@ -1207,9 +1203,10 @@ class URLData(CyURLData, OAuthDataStore):
 
 # ################################################################################################################################
 
-    def _channel_item_from_msg(self, msg, match_target, old_data={}):
+    def _channel_item_from_msg(self, msg, match_target, old_data=None):
         """ Creates a channel info bunch out of an incoming CREATE_EDIT message.
         """
+        old_data = old_data or {}
         channel_item = {}
         for name in('connection', 'content_type', 'data_format', 'host', 'id', 'has_rbac', 'impl_name', 'is_active',
             'is_internal', 'merge_url_params_req', 'method', 'name', 'params_pri', 'ping_method', 'pool_size', 'service_id',
@@ -1256,7 +1253,7 @@ class URLData(CyURLData, OAuthDataStore):
             sec_config = getattr(self, '{}_config'.format(msg['sec_type']))
             config_item = sec_config[msg['security_name']]
 
-            for k, v in iteritems(config_item['config']):
+            for k, _v in iteritems(config_item['config']):
                 sec_info.sec_def[k] = config_item['config'][k]
         else:
             sec_info.sec_def = ZATO_NONE

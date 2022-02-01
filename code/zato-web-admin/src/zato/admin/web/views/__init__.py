@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+# pylint: disable=attribute-defined-outside-init
 
 # stdlib
 import logging
@@ -20,7 +20,6 @@ from bunch import Bunch
 
 # Django
 from django.http import HttpResponse, HttpResponseServerError
-from django.template.response import TemplateResponse
 
 # pytz
 from pytz import UTC
@@ -36,6 +35,7 @@ except ImportError:
 
 from zato.admin.settings import ssl_key_file, ssl_cert_file, ssl_ca_certs, LB_AGENT_CONNECT_TIMEOUT
 from zato.admin.web import from_utc_to_user
+from zato.admin.web.util import get_template_response
 from zato.common.api import CONNECTION, SEC_DEF_TYPE_NAME, URL_TYPE, ZATO_NONE, ZATO_SEC_USE_RBAC
 from zato.common.exception import ZatoException
 from zato.common.json_internal import dumps
@@ -53,6 +53,12 @@ except ImportError:
 # For pyflakes
 django_url_reverse = django_url_reverse
 slugify = slugify
+
+# ################################################################################################################################
+
+if 0:
+    from zato.client import ServiceInvokeResponse
+    from zato.common.typing_ import any_
 
 # ################################################################################################################################
 
@@ -157,8 +163,6 @@ def method_allowed(*methods_allowed):
     for a given view. An exception will be raised if a request has been made
     with a method outside of those allowed, otherwise the view executes
     unchanged.
-    TODO: Make it return a custom Exception so that whoever called us can
-    catch it and return a correct HTTP status (405 Method not allowed).
     """
     def inner_method_allowed(view):
         def inner_view(*args, **kwargs):
@@ -273,15 +277,17 @@ def build_sec_def_link_by_input(req, cluster_id, input_data):
 
 # ################################################################################################################################
 
-class _BaseView(object):
+class _BaseView:
     method_allowed = 'method_allowed-must-be-defined-in-a-subclass'
     service_name = None
     async_invoke = False
     form_prefix = ''
 
     def __init__(self):
-        self.req = None
+        self.req = None # type: any_
         self.cluster_id = None
+        self.clear_user_message()
+        self.ctx = {}
 
     def __call__(self, req, *args, **kwargs):
         self.req = req
@@ -295,6 +301,9 @@ class _BaseView(object):
 
     def on_before_append_item(self, item):
         return item
+
+    def get_output_class(self):
+        pass
 
     def on_after_set_input(self):
         pass
@@ -310,7 +319,7 @@ class _BaseView(object):
         output_optional = []
         output_repeated = False
 
-    def get_service_name(self):
+    def get_service_name(self, *_args, **_kwargs):
         raise NotImplementedError('May be implemented by subclasses')
 
     def fetch_cluster_id(self):
@@ -370,6 +379,8 @@ class Index(_BaseView):
     template = 'template-must-be-defined-in-a-subclass-or-get-template-name'
 
     output_class = None
+    clear_self_items = True
+    update_request_with_self_input = True
 
     def __init__(self):
         super(Index, self).__init__()
@@ -406,7 +417,7 @@ class Index(_BaseView):
     def before_invoke_admin_service(self):
         pass
 
-    def get_service_name(self, req):
+    def get_service_name(self, _req):
         raise NotImplementedError('May be implemented in subclasses')
 
     def get_initial_input(self):
@@ -416,18 +427,57 @@ class Index(_BaseView):
         """ May be overridden by subclasses to dynamically decide which template to use,
         otherwise self.template will be employed.
         """
-    def invoke_admin_service(self):
+
+    def should_extract_top_level(self, _keys):
+        return True
+
+    def invoke_admin_service(self) -> 'ServiceInvokeResponse':
         if self.req.zato.get('cluster'):
             func = self.req.zato.client.invoke_async if self.async_invoke else self.req.zato.client.invoke
-            service_name = self.service_name if self.service_name else self.get_service_name()
+            service_name = self.service_name if self.service_name else self.get_service_name(self.req)
             request = self.get_initial_input()
-            request.update(self.input)
+
+            if self.update_request_with_self_input:
+                request.update(self.input)
+            else:
+                logger.info('Not updating request with self.input')
 
             logger.info('Invoking `%s` with `%s`', service_name, request)
 
             return func(service_name, request)
 
-    def _handle_item_list(self, item_list):
+    def _handle_single_item_list(self, container, item_list):
+        """ Creates a new instance of the model class for each of the element received
+        and fills it in with received attributes.
+        """
+        names = tuple(chain(self.SimpleIO.output_required, self.SimpleIO.output_optional))
+
+        for msg_item in item_list or []:
+
+            output_class = self.get_output_class()
+            item = output_class() if output_class else self.output_class()
+
+            # Use attributes that were definded upfront for the SimpleIO definition
+            # or use everything that we received from the service.
+            names = names if names else msg_item.keys()
+
+            for name in sorted(names):
+                value = getattr(msg_item, name, None)
+                if value is not None:
+                    value = getattr(value, 'text', '') or value
+                if value or value in (0, [], {}):
+                    setattr(item, name, value)
+
+            item = self.on_before_append_item(item)
+
+            if isinstance(item, (list, tuple)):
+                func = container.extend
+            else:
+                func = container.append
+
+            func(item)
+
+    def handle_item_list(self, item_list, _ignored_is_extracted):
         """ Creates a new instance of the model class for each of the element received
         and fills it in with received attributes.
         """
@@ -466,7 +516,12 @@ class Index(_BaseView):
 
         try:
             super(Index, self).__call__(req, *args, **kwargs)
-            del self.items[:]
+
+            # The value of clear_self_items if True if we are returning a single list of elements,
+            # based on self.extract_top_level_key_from_payload.
+            if self.clear_self_items:
+                del self.items[:]
+
             self.item = None
             self.set_input()
 
@@ -481,16 +536,27 @@ class Index(_BaseView):
 
                 logger.info('Response from service: `%s`', response.data)
 
-                if response.ok:
+                if response and response.ok:
                     return_data['response_inner'] = response.inner_service_response
+
                     if output_repeated:
-                        if isinstance(response.data, dict):
+                        if response and isinstance(response.data, dict):
                             response.data.pop('_meta', None)
                             keys = list(iterkeys(response.data))
-                            data = response.data[keys[0]]
+                            if self.should_extract_top_level(keys):
+                                data = response.data[keys[0]]
+                                is_extracted = True
+                            else:
+                                data = response.data
+                                is_extracted = False
                         else:
                             data = response.data
-                        self._handle_item_list(data)
+                            is_extracted = False
+
+                        # At this point, this may be just a list of elements, if self.should_extract_top_level returns True,
+                        # or a dictionary of keys pointing to lists with such elements.
+                        self.handle_item_list(data, is_extracted)
+
                     else:
                         self._handle_item(response.data)
                 else:
@@ -521,7 +587,7 @@ class Index(_BaseView):
             for k, v in sorted(return_data.items()):
                 logger.info('Index key/value `%s` -> `%r`', k, v)
 
-            return TemplateResponse(req, template_name, return_data)
+            return get_template_response(req, template_name, return_data)
 
         except Exception:
             return HttpResponseServerError(format_exc())
@@ -540,10 +606,12 @@ class CreateEdit(_BaseView):
         self.input = Bunch()
         self.input_dict = {}
 
-    def __call__(self, req, initial_input_dict={}, initial_return_data={}, *args, **kwargs):
+    def __call__(self, req, initial_input_dict=None, initial_return_data=None, *args, **kwargs):
         """ Handles the request, taking care of common things and delegating
         control to the subclass for fetching this view-specific data.
         """
+        initial_input_dict = initial_input_dict or {}
+        initial_return_data = initial_return_data or {}
         self.input_dict.clear()
         self.clear_user_message()
 
@@ -636,7 +704,8 @@ class BaseCallView(_BaseView):
     def get_input_dict(self):
         raise NotImplementedError('Must be defined in subclasses')
 
-    def __call__(self, req, initial_input_dict={}, *args, **kwargs):
+    def __call__(self, req, initial_input_dict=None, *args, **kwargs):
+        initial_input_dict = initial_input_dict or {}
         try:
             super(BaseCallView, self).__call__(req, *args, **kwargs)
             input_dict = self.get_input_dict()
@@ -663,7 +732,7 @@ class Delete(BaseCallView):
 
 # ################################################################################################################################
 
-class SecurityList(object):
+class SecurityList:
     def __init__(self):
         self.def_items = []
 
@@ -708,8 +777,8 @@ def id_only_service(req, service, id, error_template='{}', initial=None):
             raise Exception(result.details)
         else:
             return result
-    except Exception:
-        msg = error_template.format(format_exc())
+    except Exception as e:
+        msg = error_template.format(e.args)
         logger.error(msg)
         return HttpResponseServerError(msg)
 

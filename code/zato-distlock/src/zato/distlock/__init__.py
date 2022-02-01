@@ -6,13 +6,14 @@ Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
+# pylint: disable=abstract-method, arguments-differ
+
 # stdlib
 import logging
 import os
 from datetime import datetime, timedelta
 from errno import ENOENT
 from hashlib import sha256
-from pwd import getpwuid
 from tempfile import gettempdir
 from threading import current_thread
 from traceback import format_exc
@@ -21,13 +22,19 @@ from traceback import format_exc
 from gevent import sleep, spawn
 
 # portalocker
-from portalocker import lock, LockException, LOCK_NB, LOCK_EX, unlock
+from portalocker import lock as portalocker_lock, LockException, LOCK_NB, LOCK_EX, unlock
 
 # SQLAlchemy
 from sqlalchemy import func
 
 # Zato
-from zato.common.util.api import make_repr
+from zato.common.util.api import get_current_user, make_repr # pylint: disable=no-name-in-module
+
+# ################################################################################################################################
+
+if 0:
+    from typing import BinaryIO
+    BinaryIO = BinaryIO
 
 # ################################################################################################################################
 
@@ -57,9 +64,10 @@ class LockTimeout(Exception):
 
 # ################################################################################################################################
 
-class LockInfo(object):
-    __slots__ = ('lock', 'namespace', 'name', 'priv_id', 'pub_id', 'ttl', 'acquired', 'lock_type', 'block', 'block_interval',
-        'release')
+class LockInfo:
+    __slots__ = (
+        'lock', 'namespace', 'name', 'priv_id', 'pub_id', 'ttl', 'acquired', 'lock_type', 'block', 'block_interval', 'release'
+    )
 
     def __init__(self, lock, namespace, name, priv_id, pub_id, ttl, acquired, lock_type, block, block_interval):
         self.lock = lock
@@ -82,7 +90,7 @@ class LockInfo(object):
 
 # ################################################################################################################################
 
-class Lock(object):
+class Lock:
     """ Base class for all backend-specific locks.
     """
     def __init__(self, os_user_name, session, namespace, name, ttl, block, block_interval, _permanent=LOCK_TYPE.PERMANENT,
@@ -152,7 +160,7 @@ class Lock(object):
 
             if not acquired:
                 msg = 'Could not obtain lock for `{}` `{}` within {}s'.format(self.namespace, self.name, _block)
-                logger.warn(msg)
+                logger.warning(msg)
                 raise LockTimeout(msg)
 
         if _has_debug:
@@ -179,6 +187,11 @@ class Lock(object):
 
 # ################################################################################################################################
 
+    def release(self, *ignored_args, **ignored_kwargs):
+        raise NotImplementedError()
+
+# ################################################################################################################################
+
     def _sustain(self):
         """ Spawns a greenlet that will sustain the lock for at least self.ttl,
         possibly less if self.__exit__ is called earlier.
@@ -187,7 +200,7 @@ class Lock(object):
 
 # ################################################################################################################################
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, type_, value, traceback):
         self.release()
 
 # ################################################################################################################################
@@ -208,6 +221,11 @@ class SQLLock(Lock):
                 logger.debug('Released %s', self.priv_id)
 
         self.session.close()
+
+# ################################################################################################################################
+
+    def _release_func(self, *ignored_args, **ignored_kwargs):
+        raise NotImplementedError()
 
 # ################################################################################################################################
 
@@ -247,10 +265,11 @@ creation_time_utc={}
 user={}
 """.lstrip()
 
+    tmp_file: ... # type: BinaryIO
+
     def __init__(self, *args, **kwargs):
-        super(FCNTLLock, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.tmp_file_name = None
-        self.tmp_file = None
 
     def _acquire_impl(self, _flags=LOCK_EX | LOCK_NB, tmp_dir=gettempdir(), _utcnow=datetime.utcnow, _has_debug=has_debug):
 
@@ -274,7 +293,7 @@ user={}
             logger.debug('Created lock file `%s` (%s %s %s)', self.tmp_file_name, pid, current_name, current_ident)
 
         try:
-            lock(self.tmp_file, _flags)
+            portalocker_lock(self.tmp_file, _flags)
         except LockException:
             return False
         else:
@@ -294,11 +313,11 @@ user={}
 
             try:
                 os.remove(self.tmp_file.name)
-            except OSError as e:
+            except OSError as exc:
 
                 # ENOENT = No such file, this is fine, apparently another process beat us to that lock's deletion.
                 # But any other exception needs to be re-raised.
-                if e.errno != ENOENT:
+                if exc.errno != ENOENT:
                     raise
             else:
                 if _has_debug:
@@ -309,7 +328,19 @@ user={}
 
 # ################################################################################################################################
 
-class LockManager(object):
+class PassThrough(Lock):
+    """ A pass-through lock used under Windows.
+    """
+    def _acquire_impl(self, *ignored_args, **ignored_kwargs):
+        return True
+
+    def release(self, *ignored_args, **ignored_kwargs):
+        pass
+
+# ################################################################################################################################
+
+# pylint: disable-next=unused-variable
+class LockManager:
     """ A distributed lock manager based on SQL or, if only IPC is needed, on fcntl.
     """
     _lock_impl = {
@@ -317,6 +348,7 @@ class LockManager(object):
         'oracle': OracleLock,
         'mysql+pymysql': MySQLLock,
         'fcntl': FCNTLLock,
+        'zato-pass-through': PassThrough,
         }
 
     def __init__(self, backend_type, default_namespace, session=None):
@@ -324,15 +356,16 @@ class LockManager(object):
         self.default_namespace = default_namespace
         self.session = session
         self._lock_class = self._lock_impl[backend_type]
-        self.user_name = getpwuid(os.getuid()).pw_name
+        self.user_name = get_current_user()
 
+    # pylint: disable-next=inconsistent-return-statements
     def __call__(self, name, namespace='', ttl=DEFAULT.TTL, block=DEFAULT.BLOCK, block_interval=DEFAULT.BLOCK_INTERVAL,
-            max_len_ns=MAX.LEN_NS, max_len_name=MAX.LEN_NAME):
+            max_len_ns=MAX.LEN_NS, max_len_name=MAX.LEN_NAME, max_chars=31) -> 'Lock':
 
         try:
             if len(namespace) > max_len_ns:
                 msg = 'Lock operation rejected. Namespace `{}` exceeds the limit of {} characters.'.format(namespace, max_len_ns)
-                logger.warn(msg)
+                logger.warning(msg)
                 raise ValueError(msg)
 
             if len(name) > max_len_name:
@@ -347,23 +380,29 @@ class LockManager(object):
                     hash_digest = sha256(name).hexdigest()
                     name = name.decode('utf8')
 
-                name_prefix = name[:31]
-                name_suffix = name[-31:]
+                name_prefix = name[:max_chars]
+                name_suffix = name[-max_chars:]
                 name = '{}-{}-{}'.format(name_prefix, name_suffix, hash_digest)
 
             # To be on the safe side, check again if the limit is not exceeded
             if len(name) > max_len_name:
 
                 msg = 'Lock operation rejected. Name `{}` exceeds the limit of {} characters.'.format(name, max_len_name)
-                logger.warn(msg)
+                logger.warning(msg)
                 raise ValueError(msg)
 
         except Exception:
-            logger.warn('Lock could not be acquired, e:`%s`', format_exc())
+            logger.warning('Lock could not be acquired, e:`%s`', format_exc())
 
         else:
+
+            namespace = namespace or self.default_namespace
+
+            logger.debug('Acquiring lock class:`%s` -> ns:%s, n:%s, t:%s, b:%s, bi:%s, s:%s',
+                self._lock_class, namespace, name, ttl, block, block_interval, self.session)
+
             return self._lock_class(
-                self.user_name, self.session, namespace or self.default_namespace, name, ttl, block, block_interval)
+                self.user_name, self.session, namespace, name, ttl, block, block_interval)
 
     def acquire(self, *args, **kwargs):
         return self(*args, **kwargs).acquire()

@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+# pylint: disable=attribute-defined-outside-init
 
 # stdlib
-import os
 from contextlib import closing
 from logging import getLogger
 
@@ -22,7 +21,6 @@ from zato.common.util.api import asbool
 from zato.common.util.sql import elems_with_opaque
 from zato.common.util.url_dispatcher import get_match_target
 from zato.server.config import ConfigDict
-from zato.server.message import JSONPointerStore, NamespaceStore, XPathStore
 from zato.url_dispatcher import Matcher
 
 # ################################################################################################################################
@@ -46,7 +44,7 @@ _audit_max_len_messages = AuditLog.Default.max_len_messages
 # ################################################################################################################################
 # ################################################################################################################################
 
-class ConfigLoader(object):
+class ConfigLoader:
     """ Loads server's configuration.
     """
 
@@ -387,11 +385,6 @@ class ConfigLoader(object):
         query = self.odb.get_email_imap_list(server.cluster.id, True)
         self.config.email_imap = ConfigDict.from_query('email_imap', query, decrypt_func=self.decrypt)
 
-        # Message paths
-        self.config.msg_ns_store = NamespaceStore()
-        self.config.json_pointer_store = JSONPointerStore()
-        self.config.xpath_store = XPathStore()
-
         # HTTP access log should optionally ignore certain requests
         access_log_ignore = self.fs_server_config.get('logging', {}).get('http_access_log_ignore')
         if access_log_ignore:
@@ -543,19 +536,6 @@ class ConfigLoader(object):
 
 # ################################################################################################################################
 
-    def get_lua_programs(self):
-        for item in 'internal', 'user':
-            dir_name = os.path.join(self.repo_location, 'lua', item)
-            for file_name in os.listdir(dir_name):
-
-                lua_idx = file_name.find('.lua')
-                name = file_name[0:lua_idx] if lua_idx else file_name
-                program = open(os.path.join(dir_name, file_name)).read()
-
-                yield [name, program]
-
-# ################################################################################################################################
-
     def get_config_odb_data(self, parallel_server):
         """ Returns configuration with regards to ODB data.
         """
@@ -587,8 +567,9 @@ class ConfigLoader(object):
         """ All passwords are always encrypted so we need to look up any that are not,
         for instance, because it is a cluster newly migrated from 2.0 to 3.0, and encrypt them now in ODB.
         """
-        sec_config_dict_types = ('apikey', 'aws', 'basic_auth', 'jwt', 'ntlm', 'oauth',
-            'tls_key_cert', 'wss', 'vault_conn_sec', 'xpath_sec')
+        sec_config_dict_types = (
+            'apikey', 'aws', 'basic_auth', 'jwt', 'ntlm', 'oauth', 'tls_key_cert', 'wss', 'vault_conn_sec', 'xpath_sec'
+        )
 
         # Global lock to make sure only one server attempts to do it at a time
         with self.zato_lock_manager('zato_encrypt_secrets'):

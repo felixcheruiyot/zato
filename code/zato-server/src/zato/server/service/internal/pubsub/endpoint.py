@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2021, Zato Source s.r.o. https://zato.io
+Copyright (C) 2022, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
@@ -13,14 +13,13 @@ from contextlib import closing
 from zato.common.api import PUBSUB as COMMON_PUBSUB
 from zato.common.broker_message import PUBSUB
 from zato.common.exception import BadRequest, Conflict
-from zato.common.json_internal import loads
 from zato.common.odb.model import PubSubEndpoint, PubSubEndpointEnqueuedMessage, PubSubMessage, PubSubSubscription, PubSubTopic
 from zato.common.odb.query import count, pubsub_endpoint, pubsub_endpoint_list, pubsub_endpoint_queue, \
      pubsub_messages_for_queue, server_by_id
 from zato.common.odb.query.pubsub.endpoint import pubsub_endpoint_summary, pubsub_endpoint_summary_list
 from zato.common.odb.query.pubsub.subscription import pubsub_subscription_list_by_endpoint_id
-from zato.common.pubsub import msg_pub_attrs
-from zato.common.util.pubsub import get_topic_sub_keys_from_sub_keys, make_short_msg_copy_from_msg
+from zato.common.pubsub import ensure_subs_exist, msg_pub_attrs
+from zato.common.util.pubsub import get_endpoint_metadata, get_topic_sub_keys_from_sub_keys, make_short_msg_copy_from_msg
 from zato.common.simpleio_ import drop_sio_elems
 from zato.common.util.time_ import datetime_from_ms
 from zato.server.service import AsIs, Bool, Int, List
@@ -33,6 +32,18 @@ from zato.server.service.meta import CreateEditMeta, DeleteMeta, GetListMeta
 from past.builtins import unicode
 from six import add_metaclass
 
+# ################################################################################################################################
+# ################################################################################################################################
+
+if 0:
+    from bunch import Bunch
+    from zato.server.pubsub.model import subnone
+    from zato.server.service import Service
+    Bunch   = Bunch
+    Service = Service
+    subnone = subnone
+
+# ################################################################################################################################
 # ################################################################################################################################
 
 elem = 'pubsub_endpoint'
@@ -73,6 +84,7 @@ _sub_skip_update = ('id', 'sub_id', 'sub_key', 'cluster_id', 'creation_time', 'c
     'out_rest_http_soap_id', 'out_soap_http_soap_id', 'out_http_soap_id')
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class _GetEndpointQueueMessagesSIO(GetListAdminSIO):
     input_required = ('cluster_id',)
@@ -83,6 +95,8 @@ class _GetEndpointQueueMessagesSIO(GetListAdminSIO):
     output_repeated = True
 
 # ################################################################################################################################
+# ################################################################################################################################
+
 
 def instance_hook(self, input, instance, attrs):
 
@@ -105,12 +119,15 @@ def broker_message_hook(self, input, instance, attrs, service_type):
             input.is_internal = pubsub_endpoint(session, input.cluster_id, instance.id).is_internal
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 @add_metaclass(GetListMeta)
 class GetList(AdminService):
     _filter_by = PubSubEndpoint.name,
 
 # ################################################################################################################################
+# ################################################################################################################################
+
 
 class Create(AdminService):
     """ Creates a new pub/sub endpoint.
@@ -159,17 +176,21 @@ class Create(AdminService):
             self.response.payload.name = self.request.input.name
 
 # ################################################################################################################################
+# ################################################################################################################################
+
 
 @add_metaclass(CreateEditMeta)
 class Edit(AdminService):
     pass
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 @add_metaclass(DeleteMeta)
 class Delete(AdminService):
     pass
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class Get(AdminService):
@@ -186,6 +207,7 @@ class Get(AdminService):
             self.response.payload = pubsub_endpoint(session, self.request.input.cluster_id, self.request.input.id)
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class GetTopicList(AdminService):
     """ Returns all topics to which a given endpoint published at least once.
@@ -200,16 +222,9 @@ class GetTopicList(AdminService):
 # ################################################################################################################################
 
     def handle(self):
-        out = self.kvdb.conn.get(_meta_endpoint_key % (self.request.input.cluster_id, self.request.input.endpoint_id))
-        out = loads(out) if out else []
+        self.response.payload[:] = get_endpoint_metadata(self.server, self.request.input.endpoint_id)
 
-        for elem in out:
-            elem['pub_time'] = datetime_from_ms(elem['pub_time'] * 1000.0)
-            if elem['ext_pub_time']:
-                elem['ext_pub_time'] = datetime_from_ms(float(elem['ext_pub_time']) * 1000.0)
-
-        self.response.payload[:] = out
-
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetEndpointQueueNonGDDepth(AdminService):
@@ -224,6 +239,7 @@ class GetEndpointQueueNonGDDepth(AdminService):
         _, non_gd_depth = pubsub_tool.get_queue_depth(self.request.input.sub_key)
         self.response.payload.current_depth_non_gd = non_gd_depth
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class _GetEndpointQueue(AdminService):
@@ -261,6 +277,7 @@ class _GetEndpointQueue(AdminService):
         item['current_depth_non_gd'] = current_depth_non_gd
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class GetEndpointQueue(_GetEndpointQueue):
     """ Returns information describing an individual endpoint queue.
@@ -278,6 +295,7 @@ class GetEndpointQueue(_GetEndpointQueue):
             self.response.payload = item
             self._add_queue_depths(session, self.response.payload)
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetEndpointQueueList(_GetEndpointQueue):
@@ -318,13 +336,14 @@ class GetEndpointQueueList(_GetEndpointQueue):
         self.response.payload[:] = response
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class UpdateEndpointQueue(AdminService):
     """ Modifies selected subscription queue.
     """
     class SimpleIO(AdminSIO):
         input_required = ('cluster_id', 'id', 'sub_key', 'active_status')
-        input_optional = drop_sio_elems(common_sub_data, 'active_status', 'sub_key')
+        input_optional = drop_sio_elems(common_sub_data, 'active_status', 'sub_key', 'creation_time', 'last_interaction_time')
         output_required = ('id', 'name')
 
     def handle(self):
@@ -393,6 +412,7 @@ class UpdateEndpointQueue(AdminService):
                     })
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class ClearEndpointQueue(AdminService):
     """ Clears messages from the queue given on input.
@@ -429,6 +449,7 @@ class ClearEndpointQueue(AdminService):
 
             session.commit()
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class DeleteEndpointQueue(AdminService):
@@ -478,16 +499,20 @@ class DeleteEndpointQueue(AdminService):
         })
 
 # ################################################################################################################################
+# ################################################################################################################################
 
-class _GetMessagesBase(object):
-    def _get_sub_by_sub_input(self):
-        if self.request.input.get('sub_id'):
-            return self.pubsub.get_subscription_by_id(self.request.input.sub_id)
-        elif self.request.input.get('sub_key'):
-            return self.pubsub.get_subscription_by_sub_key(self.request.input.sub_key)
+class _GetMessagesBase:
+
+    def _get_sub_by_sub_input(self:'Service', input:'Bunch') -> 'subnone':
+
+        if input.get('sub_id'):
+            return self.pubsub.get_subscription_by_id(input.sub_id)
+        elif input.get('sub_key'):
+            return self.pubsub.get_subscription_by_sub_key(input.sub_key)
         else:
             raise Exception('Either sub_id or sub_key must be given on input')
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetEndpointQueueMessagesGD(AdminService, _GetMessagesBase):
@@ -497,7 +522,13 @@ class GetEndpointQueueMessagesGD(AdminService, _GetMessagesBase):
     SimpleIO = _GetEndpointQueueMessagesSIO
 
     def get_data(self, session):
-        sub = self._get_sub_by_sub_input()
+
+        input = self.request.input
+        sub = self._get_sub_by_sub_input(input)
+
+        if not sub:
+            self.logger.info('Could not find subscription by input `%s` (#1)', input)
+            return []
 
         return self._search(
             pubsub_messages_for_queue, session, self.request.input.cluster_id, sub.sub_key, True, False)
@@ -510,6 +541,7 @@ class GetEndpointQueueMessagesGD(AdminService, _GetMessagesBase):
             item['recv_time'] = datetime_from_ms(item['recv_time'] * 1000.0)
             item['published_by_name'] = self.pubsub.get_endpoint_by_id(item['published_by_id']).name
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetServerEndpointQueueMessagesNonGD(AdminService):
@@ -533,6 +565,7 @@ class GetServerEndpointQueueMessagesNonGD(AdminService):
             elem['published_by_name'] = self.pubsub.get_endpoint_by_id(elem['published_by_id']).name
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class GetEndpointQueueMessagesNonGD(NonGDSearchService, _GetMessagesBase):
     """ Returns a list of non-GD messages for an input queue by its sub_key.
@@ -540,7 +573,14 @@ class GetEndpointQueueMessagesNonGD(NonGDSearchService, _GetMessagesBase):
     SimpleIO = _GetEndpointQueueMessagesSIO
 
     def handle(self):
-        sub = self._get_sub_by_sub_input()
+
+        input = self.request.input
+        sub = self._get_sub_by_sub_input(input)
+
+        if not sub:
+            self.logger.info('Could not find subscription by input `%s` (#2)', input)
+            return
+
         sk_server = self.pubsub.get_delivery_server_by_sub_key(sub.sub_key)
 
         if sk_server:
@@ -553,6 +593,7 @@ class GetEndpointQueueMessagesNonGD(NonGDSearchService, _GetMessagesBase):
                 self.response.payload[:] = reversed(response['response'])
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class _GetEndpointSummaryBase(AdminService):
     """ Base class for services returning summaries about endpoints
@@ -564,6 +605,7 @@ class _GetEndpointSummaryBase(AdminService):
         output_optional = ('security_id', 'sec_type', 'sec_name', 'ws_channel_id', 'ws_channel_name',
             'service_id', 'service_name', 'last_seen', 'last_deliv_time', 'role')
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetEndpointSummary(_GetEndpointSummaryBase):
@@ -586,6 +628,7 @@ class GetEndpointSummary(_GetEndpointSummaryBase):
 
             self.response.payload = item
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetEndpointSummaryList(_GetEndpointSummaryBase):
@@ -616,6 +659,7 @@ class GetEndpointSummaryList(_GetEndpointSummaryBase):
         with closing(self.odb.session()) as session:
             self.response.payload[:] = self.get_data(session)
 
+# ################################################################################################################################
 # ################################################################################################################################
 
 class GetTopicSubList(AdminService):
@@ -655,6 +699,7 @@ class GetTopicSubList(AdminService):
         self.response.payload.topic_sub_list = out
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class GetServerDeliveryMessages(AdminService):
     """ Returns a list of messages to be delivered to input endpoint. The messages must exist on current server.
@@ -668,6 +713,7 @@ class GetServerDeliveryMessages(AdminService):
         self.response.payload.msg_list = ps_tool.pull_messages(self.request.input.sub_key)
 
 # ################################################################################################################################
+# ################################################################################################################################
 
 class GetDeliveryMessages(AdminService, _GetMessagesBase):
     """ Returns a list of messages to be delivered to input endpoint.
@@ -680,7 +726,14 @@ class GetDeliveryMessages(AdminService, _GetMessagesBase):
         default_value = None
 
     def handle(self):
-        sub = self._get_sub_by_sub_input()
+
+        input = self.request.input
+        sub = self._get_sub_by_sub_input(input)
+
+        if not sub:
+            self.logger.info('Could not find subscription by input `%s` (#3)', input)
+            return
+
         sk_server = self.pubsub.get_delivery_server_by_sub_key(sub.sub_key)
 
         if sk_server:
@@ -689,11 +742,51 @@ class GetDeliveryMessages(AdminService, _GetMessagesBase):
             }, pid=sk_server.server_pid)
 
             if response:
+
+                # Extract the actual list of messages ..
+                response = response.data
+                response = response[sk_server.server_pid]
+                response = response.pid_data
                 response = response['msg_list']
                 response = reversed(response)
+                response = list(response)
+
+                # .. at this point the topic may have been already deleted ..
+                try:
+                    topic = self.pubsub.get_topic_by_sub_key(sub.sub_key)
+                    topic_name = topic.name
+                except KeyError:
+                    self.logger.info('Could not find topic by sk `%s`', sub.sub_key)
+                    topic_name = '(None)'
+
+                # .. make sure that all of the sub_keys actually still exist ..
+                with closing(self.odb.session()) as session:
+                    response = ensure_subs_exist(session, topic_name, response, response, 'returning to endpoint')
 
                 self.response.payload[:] = response
         else:
             self.logger.info('Could not find delivery server for sub_key:`%s`', sub.sub_key)
 
+# ################################################################################################################################
+# ################################################################################################################################
+
+class GetEndpointMetadata(AdminService):
+    """ An invoker making use of the API that Redis-based communication used to use.
+    """
+    def handle(self):
+
+        # Local aliases
+        endpoint_id = self.request.raw_request['endpoint_id']
+
+        # Build a full key to look up data by ..
+        endpoint_key = _meta_endpoint_key % (self.server.cluster_id, endpoint_id)
+
+        # .. get the data ..
+        topic_list = self.server.pub_sub_metadata.get(endpoint_key)
+
+        # .. and return it to our caller.
+        if topic_list:
+            self.response.payload = {'topic_list': topic_list}
+
+# ################################################################################################################################
 # ################################################################################################################################

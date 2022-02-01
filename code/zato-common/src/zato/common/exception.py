@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2022, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 from http.client import BAD_REQUEST, CONFLICT, FORBIDDEN, INTERNAL_SERVER_ERROR, METHOD_NOT_ALLOWED, NOT_FOUND, \
@@ -62,10 +60,11 @@ class StatusAwareException(ZatoException):
     """ Raised when the underlying error condition can be easily expressed
     as one of the HTTP status codes.
     """
-    def __init__(self, cid, msg, status):
+    def __init__(self, cid, msg, status, needs_msg=False):
         super(StatusAwareException, self).__init__(cid, msg)
         self.status = status
         self.reason = HTTP_RESPONSES[status]
+        self.needs_msg = needs_msg
 
     def __repr__(self):
         return '<{} at {} cid:`{}`, status:`{}`, msg:`{}`>'.format(
@@ -107,8 +106,8 @@ class Inactive(ZatoException):
 # Below are HTTP exceptions
 
 class Reportable(HTTPException):
-    def __init__(self, cid, msg, status):
-        super(ClientHTTPError, self).__init__(cid, msg, status)
+    def __init__(self, cid, msg, status, needs_msg=False):
+        super(ClientHTTPError, self).__init__(cid, msg, status, needs_msg)
 
 # Backward compatibility with pre 3.0
 ClientHTTPError = Reportable
@@ -116,8 +115,8 @@ ClientHTTPError = Reportable
 # ################################################################################################################################
 
 class BadRequest(Reportable):
-    def __init__(self, cid, msg='Received a bad request'):
-        super(BadRequest, self).__init__(cid, msg, BAD_REQUEST)
+    def __init__(self, cid, msg='Received a bad request', needs_msg=False):
+        super(BadRequest, self).__init__(cid, msg, BAD_REQUEST, needs_msg)
 
 # ################################################################################################################################
 

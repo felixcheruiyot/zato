@@ -23,6 +23,7 @@ from six import PY2
 
 # Zato
 from zato.common.api import CLI_ARG_SEP
+from zato.common.util.open_ import open_r
 
 # ################################################################################################################################
 
@@ -40,15 +41,23 @@ async_keyword = 'async_' if PY2 else 'async_'
 
 # ################################################################################################################################
 
+import platform
+system = platform.system()
+is_windows = 'windows' in system.lower()
+
+# ################################################################################################################################
+
 def get_executable():
     """ Returns the wrapper which buildout uses for executing Zato commands,
     the one with all the dependencies added to PYTHONPATH.
     """
+    if is_windows:
+        return os.path.join(os.path.dirname(sys.executable), 'python.exe')
     return os.path.join(os.path.dirname(sys.executable), 'py')
 
 # ################################################################################################################################
 
-class _StdErr(object):
+class _StdErr:
 
     # Some log messages (like the ones produced by PyKafka) go to stderr but they are not really errors,
     # in which case we need to ignore them.
@@ -67,7 +76,7 @@ class _StdErr(object):
 
         while time() - now < self.timeout:
             sleep(0.1)
-            _stderr = open(self.path)
+            _stderr = open_r(self.path)
             _err = _stderr.read()
             if _err and (not self.should_ignore(_err)):
                 return _err
@@ -88,8 +97,17 @@ def start_process(component_name, executable, run_in_fg, cli_options, extra_cli_
     """ Starts a new process from a given Python path, either in background or foreground (run_in_fg).
     """
     stderr_path = stderr_path or mkstemp('-zato-start-{}.txt'.format(component_name.replace(' ','')))[1]
-    stdout_redirect = '' if run_in_fg else '1> /dev/null'
-    stderr_redirect = '2> {}'.format(stderr_path)
+
+    stdout_redirect = ''
+    stderr_redirect = ''
+
+    # We always run in foreground under Windows
+    if is_windows:
+        run_in_fg = True
+    else:
+        if not run_in_fg:
+            stdout_redirect = '1> /dev/null'
+        stderr_redirect = '2> {}'.format(stderr_path)
 
     program = '{} {} {} {}'.format(executable, extra_cli_options, stdout_redirect, stderr_redirect)
 
@@ -109,8 +127,8 @@ def start_process(component_name, executable, run_in_fg, cli_options, extra_cli_
         # Wait a moment for any potential errors
         _err = _stderr.wait_for_error()
         if _err:
-            if 'Could not load pykafka.rdkafka extension.' not in _err:
-                logger.warn('Stderr received from program `%s` e:`%s`, kw:`%s`', program, _err, run_kwargs)
+            if 'pykafka.rdkafka' not in _err:
+                logger.warning('Stderr received from program `%s` e:`%s`, kw:`%s`', program, _err, run_kwargs)
                 sys.exit(failed_to_start_err)
 
     except KeyboardInterrupt:

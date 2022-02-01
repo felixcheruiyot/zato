@@ -25,7 +25,7 @@ if 0:
 
 # ################################################################################################################################
 
-class GetTaskSIO(object):
+class GetTaskSIO:
     output_required = ('server_name', 'server_pid', 'sub_key', 'topic_id', 'topic_name', 'is_active',
         'endpoint_id', 'endpoint_name', 'py_object', AsIs('python_id'), Int('len_messages'), Int('len_history'), Int('len_batches'),
         Int('len_delivered'))
@@ -48,7 +48,7 @@ class GetServerDeliveryTaskList(AdminService):
 
         for ps_tool in self.pubsub.pubsub_tools: # type: PubSubTool
             with ps_tool.lock:
-                for sub_key, task in ps_tool.delivery_tasks.items(): # type: (str, DeliveryTask)
+                for _ignored_sub_key, task in ps_tool.delivery_tasks.items(): # type: (str, DeliveryTask)
 
                     last_sync = task.last_iter_run # ps_tool.last_gd_run
                     if last_sync:

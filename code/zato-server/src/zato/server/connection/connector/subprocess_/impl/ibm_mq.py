@@ -69,7 +69,7 @@ _rc_reconnect_list = [_rc_conn_broken, _rc_q_mgr_quiescing, _rc_host_not_availab
 
 # ################################################################################################################################
 
-class _MessageCtx(object):
+class _MessageCtx:
     __slots__ = ('mq_msg', 'channel_id', 'queue_name', 'service_name', 'data_format')
 
     def __init__(self, mq_msg, channel_id, queue_name, service_name, data_format):
@@ -81,17 +81,18 @@ class _MessageCtx(object):
 
 # ################################################################################################################################
 
-class IBMMQChannel(object):
+class IBMMQChannel:
     """ A process to listen for messages from IBM MQ queue managers.
     """
-    def __init__(self, conn, channel_id, queue_name, service_name, data_format, on_message_callback, logger):
+    def __init__(self, conn, is_active, channel_id, queue_name, service_name, data_format, on_message_callback, logger):
         self.conn = conn
+        self.is_active = is_active
         self.id = channel_id
         self.queue_name = queue_name
         self.service_name = service_name
         self.data_format = data_format
         self.on_message_callback = on_message_callback
-        self.keep_running = False
+        self.keep_running = True if is_active else False
         self.logger = logger
         self.has_debug = self.logger.isEnabledFor(DEBUG)
 
@@ -109,13 +110,11 @@ class IBMMQChannel(object):
     def start(self, sleep_on_error=3, _connection_closing='zato.connection.closing'):
         """ Runs a background queue listener in its own  thread.
         """
-        self.keep_running = True
-
         def _invoke_callback(msg_ctx):
             try:
                 self.on_message_callback(msg_ctx)
             except Exception:
-                self.logger.warn('Could not invoke message callback %s', format_exc())
+                self.logger.warning('Could not invoke message callback %s', format_exc())
 
         def _impl():
             while self.keep_running:
@@ -141,9 +140,9 @@ class IBMMQChannel(object):
 
                 except self.pymqi.MQMIError as e:
                     if e.reason == self.pymqi.CMQC.MQRC_UNKNOWN_OBJECT_NAME:
-                        self.logger.warn('No such queue `%s` found for %s', self.queue_name, self.conn.get_connection_info())
+                        self.logger.warning('No such queue `%s` found for %s', self.queue_name, self.conn.get_connection_info())
                     else:
-                        self.logger.warn('%s in run, reason_code:`%s`, comp_code:`%s`' % (
+                        self.logger.warning('%s in run, reason_code:`%s`, comp_code:`%s`' % (
                             e.__class__.__name__, e.reason, e.comp))
 
                     # In case of any low-level PyMQI error, sleep for some time
@@ -159,7 +158,7 @@ class IBMMQChannel(object):
                     # Try to reconnect if the reason code points to one that is of a transient nature
                     while self.keep_running and e.completion_code == _cc_failed and e.reason_code in _rc_reconnect_list:
                         try:
-                            self.logger.warn('Reconnecting channel `%s` due to MQRC `%s` and MQCC `%s`',
+                            self.logger.warning('Reconnecting channel `%s` due to MQRC `%s` and MQCC `%s`',
                                 conn_info, e.reason_code, e.completion_code)
                             self.conn.reconnect()
                             self.conn.ping()
@@ -231,7 +230,7 @@ class IBMMQConnectionContainer(BaseConnectionContainer):
             'queue_name': msg_ctx.queue_name,
             'service_name': msg_ctx.service_name,
             'data_format': msg_ctx.data_format,
-            })
+        })
 
 # ################################################################################################################################
 
@@ -284,6 +283,22 @@ class IBMMQConnectionContainer(BaseConnectionContainer):
 
     def _on_CHANNEL_WMQ_CREATE(self, msg):
         return super().on_channel_create(msg)
+
+# ################################################################################################################################
+
+    def _on_CHANNEL_WMQ_EDIT(self, msg):
+        """ Updates an IBM MQ MQ channel by stopping it and starting again with a new configuration.
+        """
+        with self.lock:
+            channel = self.channels[msg.id]
+            channel.stop()
+            channel.queue_name = msg.queue.encode('utf8')
+            channel.service_name = msg.service_name
+            channel.data_format = msg.data_format
+            channel.keep_running = True if msg.is_active else False
+            channel.start()
+
+            return Response()
 
 # ################################################################################################################################
 
@@ -351,7 +366,7 @@ class IBMMQConnectionContainer(BaseConnectionContainer):
 
                 # Try to reconnect if the connection is broken but only if we have not tried to already
                 if (not is_reconnect) and cc_code == _cc_failed and reason_code == _rc_conn_broken:
-                    self.logger.warn('Caught MQRC_CONNECTION_BROKEN in send, will try to reconnect connection to %s ',
+                    self.logger.warning('Caught MQRC_CONNECTION_BROKEN in send, will try to reconnect connection to %s ',
                         conn.get_connection_info())
 
                     # Sleep for a while before reconnecting
@@ -374,24 +389,8 @@ class IBMMQConnectionContainer(BaseConnectionContainer):
 # ################################################################################################################################
 
     def _create_channel_impl(self, conn, msg):
-        return IBMMQChannel(conn, msg.id, msg.queue.encode('utf8'), msg.service_name, msg.data_format,
+        return IBMMQChannel(conn, msg.is_active, msg.id, msg.queue.encode('utf8'), msg.service_name, msg.data_format,
             self.on_mq_message_received, self.logger)
-
-# ################################################################################################################################
-
-    def _on_CHANNEL_WMQ_EDIT(self, msg):
-        """ Updates an IBM MQ MQ channel by stopping it and starting again with a new configuration.
-        """
-        with self.lock:
-            channel = self.channels[msg.id]
-            channel.stop()
-            channel.queue_name = msg.queue.encode('utf8')
-            channel.service_name = msg.service_name
-            channel.data_format = msg.data_format
-            channel.keep_running = True
-            channel.start()
-
-            return Response()
 
 # ################################################################################################################################
 

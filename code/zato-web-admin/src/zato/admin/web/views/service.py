@@ -55,7 +55,7 @@ DeploymentInfo = namedtuple('DeploymentInfo', ['server_name', 'details'])
 
 # ################################################################################################################################
 
-class SlowResponse(object):
+class SlowResponse:
     def __init__(self, cid=None, service_name=None, threshold=None, req_ts=None,
             resp_ts=None, proc_time=None, req=None, resp=None, req_html=None, resp_html=None):
         self.cid = cid
@@ -199,9 +199,8 @@ class Edit(CreateEdit):
     service_name = 'zato.service.edit'
 
     class SimpleIO(CreateEdit.SimpleIO):
-        input_required = 'id', 'is_active', 'slow_threshold'
-        input_optional = 'is_json_schema_enabled', 'needs_json_schema_err_details', 'is_rate_limit_active', \
-            'rate_limit_type', 'rate_limit_def', 'rate_limit_check_parent_def'
+        input_required = 'id', 'is_active', 'slow_threshold', 'is_json_schema_enabled', 'needs_json_schema_err_details', \
+            'is_rate_limit_active', 'rate_limit_type', 'rate_limit_def', 'rate_limit_check_parent_def'
         output_required = 'id', 'name', 'impl_name', 'is_internal', 'usage', 'may_be_deleted'
 
     def success_message(self, item):
@@ -229,12 +228,21 @@ def overview(req, service_name):
             service = Service()
 
             for name in('id', 'name', 'is_active', 'impl_name', 'is_internal',
-                  'usage', 'time_last', 'time_min_all_time', 'time_max_all_time',
-                  'time_mean_all_time'):
+                  'usage', 'last_duration', 'usage_min', 'usage_max',
+                  'usage_mean', 'last_timestamp'):
 
-                value = getattr(response.data, name)
+                value = getattr(response.data, name, None)
+
                 if name in('is_active', 'is_internal'):
                     value = is_boolean(value)
+
+                if name == 'last_timestamp':
+
+                    if value:
+                        service.last_timestamp_utc = value
+                        service.last_timestamp = from_utc_to_user(value+'+00:00', req.zato.user_profile)
+
+                    continue
 
                 setattr(service, name, value)
 
@@ -257,9 +265,6 @@ def overview(req, service_name):
             for item in req.zato.client.invoke('zato.service.get-deployment-info-list', {'id': service.id}):
                 service.deployment_info.append(DeploymentInfo(item.server_name, item.details))
 
-            # TODO: There needs to be a new service added zato.service.scheduler.job.get-by-service
-            #       or .get-list should start accept a service name. Right now we pull all the
-            #       jobs which is suboptimal.
             response = req.zato.client.invoke('zato.scheduler.job.get-list', {'cluster_id':cluster_id})
             if response.has_data:
                 for item in response.data:
@@ -290,7 +295,7 @@ def source_info(req, service_name):
         'name': service_name
     }
 
-    response = req.zato.client.invoke('zato.service.get-source-info', input_dict)
+    response = req.zato.client.invoke('zato.service.get-source-info', input_dict, needs_exception=False)
 
     if response.has_data:
         service.id = response.data.service_id
@@ -549,10 +554,10 @@ def invoke(req, name, cluster_id):
 
         response = req.zato.client.invoke(name, **input_dict)
 
-    except Exception:
-        msg = 'Could not invoke the service. name:`{}`, cluster_id:`{}`, e:`{}`'.format(name, cluster_id, format_exc())
+    except Exception as e:
+        msg = 'Service could not be invoke; name:`{}`, cluster_id:`{}`, e:`{}`'.format(name, cluster_id, format_exc())
         logger.error(msg)
-        return HttpResponseServerError(msg)
+        return HttpResponseServerError(e.args)
     else:
         try:
             if response.ok:

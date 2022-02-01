@@ -10,11 +10,13 @@ Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 import os
 from copy import deepcopy
 
-from zato.cli import common_logging_conf_contents, common_odb_opts, is_arg_given, kvdb_opts, sql_conf_contents, ZatoCommand
+from zato.cli import common_odb_opts, is_arg_given, kvdb_opts, sql_conf_contents, ZatoCommand
+from zato.common.api import SCHEDULER
 from zato.common.crypto.api import SchedulerCryptoManager
 from zato.common.crypto.const import well_known_data
 from zato.common.odb.model import Cluster
 from zato.common.scheduler import startup_jobs
+from zato.common.util.open_ import open_w
 
 # ################################################################################################################################
 
@@ -26,6 +28,16 @@ port=31530
 id={cluster_id}
 name={cluster_name}
 stats_enabled=True
+
+[server]
+server_path={server_path}
+server_host={server_host}
+server_port={server_port}
+server_username={server_username}
+server_password={server_password}
+
+[misc]
+initial_sleep_time={initial_sleep_time}
 
 [odb]
 engine={odb_engine}
@@ -39,26 +51,12 @@ extra=
 use_async_driver=True
 is_active=True
 
-[broker]
-host={broker_host}
-port={broker_port}
-password={broker_password}
-db=0
-socket_timeout=
-charset=
-errors=
-use_redis_sentinels=False
-redis_sentinels=
-redis_sentinels_master=
-shadow_password_in_logs=True
-log_connection_info_sleep_time=5 # In seconds
-
 [secret_keys]
 key1={secret_key1}
 
 [crypto]
 well_known_data={well_known_data}
-use_tls={use_tls}
+use_tls=False
 tls_protocol=TLSv1
 tls_ciphers=EECDH+AES:EDH+AES:-SHA1:EECDH+RC4:EDH+RC4:RC4-SHA:EECDH+AES256:EDH+AES256:AES256-SHA:!aNULL:!eNULL:!EXP:!LOW:!MD5
 tls_client_certs=optional
@@ -77,23 +75,36 @@ class Create(ZatoCommand):
     """ Creates a new scheduler instance.
     """
     needs_empty_dir = True
-    allow_empty_secrets = True
 
+    # Redis options are no longer used by they are kept here for pre-3.2 backward compatibility
     opts = deepcopy(common_odb_opts) + deepcopy(kvdb_opts)
 
-    opts.append({'name':'--pub_key_path', 'help':"Path to scheduler's public key in PEM"})
-    opts.append({'name':'--priv_key_path', 'help':"Path to scheduler's private key in PEM"})
-    opts.append({'name':'--cert_path', 'help':"Path to the admin's certificate in PEM"})
-    opts.append({'name':'--ca_certs_path', 'help':"Path to a bundle of CA certificates to be trusted"})
-    opts.append({'name':'cluster_name', 'help':"Name of the cluster this scheduler will belong to"})
-    opts.append({'name':'--cluster_id', 'help':"ID of the cluster this scheduler will belong to"})
-    opts.append({'name':'--secret_key', 'help':"Scheduler's secret crypto key"})
+    opts.append({'name':'--pub_key_path', 'help':'Path to scheduler\'s public key in PEM'})
+    opts.append({'name':'--priv_key_path', 'help':'Path to scheduler\'s private key in PEM'})
+    opts.append({'name':'--cert_path', 'help':'Path to the admin\'s certificate in PEM'})
+    opts.append({'name':'--ca_certs_path', 'help':'Path to a bundle of CA certificates to be trusted'})
+    opts.append({'name':'--cluster_name', 'help':'Name of the cluster this scheduler will belong to'})
+    opts.append({'name':'--cluster_id', 'help':'ID of the cluster this scheduler will belong to'})
+    opts.append({'name':'--secret_key', 'help':'Scheduler\'s secret crypto key'})
+
+    opts.append({'name':'--server_path', 'help':'Local path to a Zato server'})
+    opts.append({'name':'--server_host', 'help':'Remote host of a Zato server'})
+    opts.append({'name':'--server_port', 'help':'Remote TCP port of a Zato server'})
+    opts.append({'name':'--server_username', 'help':'Username to connect to a remote server with'})
+    opts.append({'name':'--server_password', 'help':'Password to connect to a remote server with'})
+
+    opts.append({'name':'--initial_sleep_time', 'help':'How many seconds to sleep initially when the scheduler starts'})
 
 # ################################################################################################################################
 
     def __init__(self, args):
         self.target_dir = os.path.abspath(args.path)
         super(Create, self).__init__(args)
+
+# ################################################################################################################################
+
+    def allow_empty_secrets(self):
+        return True
 
 # ################################################################################################################################
 
@@ -113,6 +124,10 @@ class Create(ZatoCommand):
 # ################################################################################################################################
 
     def execute(self, args, show_output=True, needs_created_flag=False):
+
+        # Zato
+        from zato.common.util.logging_ import get_logging_conf_contents
+
         os.chdir(self.target_dir)
 
         repo_dir = os.path.join(self.target_dir, 'config', 'repo')
@@ -162,6 +177,18 @@ class Create(ZatoCommand):
         zato_well_known_data = cm.encrypt(zato_well_known_data)
         zato_well_known_data = zato_well_known_data.decode('utf8')
 
+        server_path     = self.get_arg('server_path')
+        server_host     = self.get_arg('server_host', '127.0.0.1')
+        server_port     = self.get_arg('server_port', 17010)
+        server_username = self.get_arg('server_username', '')
+
+        server_password = self.get_arg('server_password')
+        server_password = server_password.encode('utf8')
+        server_password = cm.encrypt(server_password)
+        server_password = server_password.decode('utf8')
+
+        initial_sleep_time = self.get_arg('initial_sleep_time', SCHEDULER.InitialSleepTime)
+
         if isinstance(secret_key, (bytes, bytearray)):
             secret_key = secret_key.decode('utf8')
 
@@ -183,14 +210,21 @@ class Create(ZatoCommand):
             'cluster_name': args.cluster_name,
             'secret_key1': secret_key,
             'well_known_data': zato_well_known_data,
-            'use_tls': 'true' if use_tls else 'false'
+            'use_tls': 'true' if use_tls else 'false',
+            'server_path': server_path,
+            'server_host': server_host,
+            'server_port': server_port,
+            'server_username': server_username,
+            'server_password': server_password,
+            'initial_sleep_time': initial_sleep_time,
         }
 
-        open(os.path.join(repo_dir, 'logging.conf'), 'w').write(
-            common_logging_conf_contents.format(log_path='./logs/scheduler.log'))
-        open(conf_path, 'w').write(config_template.format(**config))
-        open(startup_jobs_conf_path, 'w').write(startup_jobs)
-        open(sql_conf_path, 'w').write(sql_conf_contents)
+        logging_conf_contents = get_logging_conf_contents()
+
+        open_w(os.path.join(repo_dir, 'logging.conf')).write(logging_conf_contents)
+        open_w(conf_path).write(config_template.format(**config))
+        open_w(startup_jobs_conf_path).write(startup_jobs)
+        open_w(sql_conf_path).write(sql_conf_contents)
 
         # Initial info
         self.store_initial_info(self.target_dir, self.COMPONENTS.SCHEDULER.code)

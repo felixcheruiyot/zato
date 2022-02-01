@@ -41,11 +41,13 @@ singleton = object()
 # ################################################################################################################################
 # ################################################################################################################################
 
-class FileTransferEvent(object):
+class FileTransferEvent:
     """ Encapsulates information about a file picked up from file system.
     """
-    __slots__ = ('base_dir', 'relative_dir', 'file_name', 'full_path', 'channel_name', 'ts_utc', 'raw_data', 'data',
-        'has_raw_data', 'has_data', 'parse_error')
+    __slots__ = (
+        'base_dir', 'relative_dir', 'file_name', 'full_path', 'channel_name', 'ts_utc', 'raw_data', 'data',
+        'has_raw_data', 'has_data', 'parse_error'
+    )
 
     def __init__(self):
 
@@ -137,7 +139,7 @@ class FileTransferEventHandler:
 
             if self.config.is_hot_deploy:
                 spawn_greenlet(hot_deploy, self.manager.server, event.file_name, event.full_path,
-                    self.config.should_delete_after_pickup)
+                    self.config.should_delete_after_pickup, should_deploy_in_place=self.config.should_deploy_in_place)
                 return
 
             if self.config.should_read_on_pickup:
@@ -162,7 +164,7 @@ class FileTransferEventHandler:
                     except Exception:
                         exception = format_exc()
                         event.parse_error = exception
-                        logger.warn('File transfer parsing error (%s) e:`%s`', self.config.name, exception)
+                        logger.warning('File transfer parsing error (%s) e:`%s`', self.config.name, exception)
 
             # Invokes all callbacks for the event
             spawn_greenlet(self.manager.invoke_callbacks, event, self.config.service_list, self.config.topic_list,
@@ -172,7 +174,7 @@ class FileTransferEventHandler:
             self.manager.post_handle(event, self.config, observer, snapshot_maker)
 
         except Exception:
-            logger.warn('Exception in pickup event handler `%s` (%s) `%s`',
+            logger.warning('Exception in pickup event handler `%s` (%s) `%s`',
                 self.config.name, transfer_event.src_path, format_exc())
 
     on_modified = on_created

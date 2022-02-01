@@ -39,7 +39,7 @@ class JSONInputParsing(BaseSIOTestCase):
             class SimpleIO:
                 input = 'aaa', Int('bbb'), Opaque('ccc'), '-ddd', '-eee'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = '222'
@@ -58,11 +58,11 @@ class JSONInputParsing(BaseSIOTestCase):
 
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, aaa)
-        self.assertEquals(input.bbb, int(bbb))
+        self.assertEqual(input.aaa, aaa)
+        self.assertEqual(input.bbb, int(bbb))
         self.assertIs(input.ccc, ccc)
-        self.assertEquals(input.ddd, backward_compat_default_value)
-        self.assertEquals(input.eee, eee)
+        self.assertEqual(input.ddd, backward_compat_default_value)
+        self.assertEqual(input.eee, eee)
 
 # ################################################################################################################################
 
@@ -74,7 +74,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     Dict('hhh', 'a', 'b', 'c'), DictList('iii', 'd', 'e', 'f'), Float('jjj'), Int('mmm'), List('nnn'), \
                     Opaque('ooo'), Text('ppp'), UUID('qqq')
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = object()
@@ -114,20 +114,20 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, aaa)
+        self.assertEqual(input.aaa, aaa)
         self.assertIs(input.bbb, bbb)
         self.assertTrue(input.ccc)
         self.assertListEqual(input.ddd, ['1', '2', '3', '4'])
 
         self.assertIsInstance(input.eee, datetime)
-        self.assertEquals(input.eee.year, 1999)
-        self.assertEquals(input.eee.month, 12)
-        self.assertEquals(input.eee.day, 31)
+        self.assertEqual(input.eee.year, 1999)
+        self.assertEqual(input.eee.month, 12)
+        self.assertEqual(input.eee.day, 31)
 
         self.assertIsInstance(input.fff, datetime)
-        self.assertEquals(input.fff.year, 1988)
-        self.assertEquals(input.fff.month, 1)
-        self.assertEquals(input.fff.day, 29)
+        self.assertEqual(input.fff.year, 1988)
+        self.assertEqual(input.fff.month, 1)
+        self.assertEqual(input.fff.day, 29)
 
 # ################################################################################################################################
 
@@ -139,7 +139,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     Dict('hhh', 'a', 'b', 'c'), DictList('iii', 'd', 'e', 'f'), Float('jjj'), Int('mmm'), List('nnn'), \
                     Opaque('ooo'), Text('ppp'), UUID('qqq')
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         bbb = object()
@@ -212,46 +212,46 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
 
         self.assertIsInstance(input, list)
-        self.assertEquals(len(input), 2)
+        self.assertEqual(len(input), 2)
 
         input1 = input[0]
         input2 = input[1]
 
-        self.assertEquals(input1.aaa, aaa)
+        self.assertEqual(input1.aaa, aaa)
         self.assertIs(input1.bbb, bbb)
         self.assertTrue(input1.ccc)
         self.assertListEqual(input1.ddd, ['1', '2', '3', '4'])
 
         self.assertIsInstance(input1.eee, datetime)
-        self.assertEquals(input1.eee.year, 1999)
-        self.assertEquals(input1.eee.month, 12)
-        self.assertEquals(input1.eee.day, 31)
+        self.assertEqual(input1.eee.year, 1999)
+        self.assertEqual(input1.eee.month, 12)
+        self.assertEqual(input1.eee.day, 31)
 
         self.assertIsInstance(input1.fff, datetime)
-        self.assertEquals(input1.fff.year, 1988)
-        self.assertEquals(input1.fff.month, 1)
-        self.assertEquals(input1.fff.day, 29)
-        self.assertEquals(input1.fff.hour, 11)
-        self.assertEquals(input1.fff.minute, 22)
-        self.assertEquals(input1.fff.second, 33)
+        self.assertEqual(input1.fff.year, 1988)
+        self.assertEqual(input1.fff.month, 1)
+        self.assertEqual(input1.fff.day, 29)
+        self.assertEqual(input1.fff.hour, 11)
+        self.assertEqual(input1.fff.minute, 22)
+        self.assertEqual(input1.fff.second, 33)
 
-        self.assertEquals(input2.aaa, aaa2)
+        self.assertEqual(input2.aaa, aaa2)
         self.assertIs(input2.bbb, bbb2)
         self.assertFalse(input2.ccc)
         self.assertListEqual(input2.ddd, ['5', '6', '7', '8'])
 
         self.assertIsInstance(input2.eee, datetime)
-        self.assertEquals(input2.eee.year, 1999)
-        self.assertEquals(input2.eee.month, 12)
-        self.assertEquals(input2.eee.day, 25)
+        self.assertEqual(input2.eee.year, 1999)
+        self.assertEqual(input2.eee.month, 12)
+        self.assertEqual(input2.eee.day, 25)
 
         self.assertIsInstance(input2.fff, datetime)
-        self.assertEquals(input2.fff.year, 1977)
-        self.assertEquals(input2.fff.month, 1)
-        self.assertEquals(input2.fff.day, 29)
-        self.assertEquals(input2.fff.hour, 11)
-        self.assertEquals(input2.fff.minute, 22)
-        self.assertEquals(input2.fff.second, 33)
+        self.assertEqual(input2.fff.year, 1977)
+        self.assertEqual(input2.fff.month, 1)
+        self.assertEqual(input2.fff.day, 29)
+        self.assertEqual(input2.fff.hour, 11)
+        self.assertEqual(input2.fff.minute, 22)
+        self.assertEqual(input2.fff.second, 33)
 
 # ################################################################################################################################
 
@@ -267,7 +267,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     Text('-fff', default=_default_fff)
                 default_input_value = _default_input_value
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         ccc = object()
@@ -283,12 +283,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, aaa)
-        self.assertEquals(input.bbb, _default_bbb)
+        self.assertEqual(input.aaa, aaa)
+        self.assertEqual(input.bbb, _default_bbb)
         self.assertIs(input.ccc, ccc)
-        self.assertEquals(input.ddd, _default_input_value)
-        self.assertEquals(input.eee, eee)
-        self.assertEquals(input.fff, _default_fff)
+        self.assertEqual(input.ddd, _default_input_value)
+        self.assertEqual(input.eee, eee)
+        self.assertEqual(input.fff, _default_fff)
 
 # ################################################################################################################################
 
@@ -302,7 +302,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = 'aaa', Int('-bbb', default=_default_bbb), Opaque('ccc'), '-ddd', Text('-eee'), \
                     Text('-fff', default=_default_fff)
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         ccc = object()
@@ -318,12 +318,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, aaa)
-        self.assertEquals(input.bbb, _default_bbb)
+        self.assertEqual(input.aaa, aaa)
+        self.assertEqual(input.bbb, _default_bbb)
         self.assertIs(input.ccc, ccc)
-        self.assertEquals(input.ddd, backward_compat_default_value)
-        self.assertEquals(input.eee, eee)
-        self.assertEquals(input.fff, _default_fff)
+        self.assertEqual(input.ddd, backward_compat_default_value)
+        self.assertEqual(input.eee, eee)
+        self.assertEqual(input.fff, _default_fff)
 
 # ################################################################################################################################
 
@@ -339,7 +339,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     Text('-fff', default=_default_fff)
                 default_value = _default_input_value
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         aaa = 'aaa-111'
         ccc = object()
@@ -355,12 +355,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, aaa)
-        self.assertEquals(input.bbb, _default_bbb)
+        self.assertEqual(input.aaa, aaa)
+        self.assertEqual(input.bbb, _default_bbb)
         self.assertIs(input.ccc, ccc)
-        self.assertEquals(input.ddd, _default_input_value)
-        self.assertEquals(input.eee, eee)
-        self.assertEquals(input.fff, _default_fff)
+        self.assertEqual(input.ddd, _default_input_value)
+        self.assertEqual(input.eee, eee)
+        self.assertEqual(input.fff, _default_fff)
 
 # ################################################################################################################################
 
@@ -389,27 +389,27 @@ class JSONInputParsing(BaseSIOTestCase):
                     Float('-jjj', default=jjj), Int('-mmm', default=mmm), List('-nnn', default=nnn), \
                     Opaque('-ooo', default=ooo), Text('-ppp', default=ppp), UUID('-qqq', default=qqq)
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         # Note that the input document is empty
         input = MyService._sio.parse_input({}, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa, backward_compat_default_value)
-        self.assertEquals(input.bbb, bbb)
-        self.assertEquals(input.ccc, ccc)
-        self.assertEquals(input.ddd, ddd)
-        self.assertEquals(input.eee, eee)
-        self.assertEquals(input.fff, fff)
-        self.assertEquals(input.ggg, ggg)
-        self.assertEquals(input.hhh, hhh)
-        self.assertEquals(input.iii, iii)
-        self.assertEquals(input.jjj, jjj)
-        self.assertEquals(input.mmm, mmm)
-        self.assertEquals(input.nnn, nnn)
-        self.assertEquals(input.ooo, ooo)
-        self.assertEquals(input.ppp, ppp)
-        self.assertEquals(input.qqq, qqq)
+        self.assertEqual(input.aaa, backward_compat_default_value)
+        self.assertEqual(input.bbb, bbb)
+        self.assertEqual(input.ccc, ccc)
+        self.assertEqual(input.ddd, ddd)
+        self.assertEqual(input.eee, eee)
+        self.assertEqual(input.fff, fff)
+        self.assertEqual(input.ggg, ggg)
+        self.assertEqual(input.hhh, hhh)
+        self.assertEqual(input.iii, iii)
+        self.assertEqual(input.jjj, jjj)
+        self.assertEqual(input.mmm, mmm)
+        self.assertEqual(input.nnn, nnn)
+        self.assertEqual(input.ooo, ooo)
+        self.assertEqual(input.ppp, ppp)
+        self.assertEqual(input.qqq, qqq)
 
 # ################################################################################################################################
 
@@ -428,7 +428,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = Dict(aaa, bbb, ccc, ggg, '-ppp')
                 default_input_value = _default_input_value
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = {
             'aaa': {
@@ -446,13 +446,13 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.aaa.bbb, 'bbb-111')
-        self.assertEquals(input.aaa.ccc.ddd, 'ddd-111')
-        self.assertEquals(input.aaa.ccc.eee, 'eee-111')
-        self.assertEquals(input.aaa.ccc.fff, _default_input_value)
-        self.assertEquals(input.aaa.ccc.eee, 'eee-111')
-        self.assertEquals(input.aaa.ggg.hhh, _default_input_value)
-        self.assertEquals(input.aaa.ggg.sss.qqq, _default_input_value)
+        self.assertEqual(input.aaa.bbb, 'bbb-111')
+        self.assertEqual(input.aaa.ccc.ddd, 'ddd-111')
+        self.assertEqual(input.aaa.ccc.eee, 'eee-111')
+        self.assertEqual(input.aaa.ccc.fff, _default_input_value)
+        self.assertEqual(input.aaa.ccc.eee, 'eee-111')
+        self.assertEqual(input.aaa.ggg.hhh, _default_input_value)
+        self.assertEqual(input.aaa.ggg.sss.qqq, _default_input_value)
 
 # ################################################################################################################################
 
@@ -467,7 +467,7 @@ class JSONInputParsing(BaseSIOTestCase):
             class SimpleIO:
                 input = customer
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.customer = Bunch()
@@ -484,12 +484,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.customer.name, data.customer.name)
-        self.assertEquals(input.customer.email.personal, data.customer.email.personal)
-        self.assertEquals(input.customer.email.business, data.customer.email.business)
-        self.assertEquals(input.customer.address.street, data.customer.address.street)
-        self.assertEquals(input.customer.address.locality.type, data.customer.address.locality.type)
-        self.assertEquals(input.customer.address.locality.name, data.customer.address.locality.name)
+        self.assertEqual(input.customer.name, data.customer.name)
+        self.assertEqual(input.customer.email.personal, data.customer.email.personal)
+        self.assertEqual(input.customer.email.business, data.customer.email.business)
+        self.assertEqual(input.customer.address.street, data.customer.address.street)
+        self.assertEqual(input.customer.address.locality.type, data.customer.address.locality.type)
+        self.assertEqual(input.customer.address.locality.name, data.customer.address.locality.name)
 
 # ################################################################################################################################
 
@@ -507,7 +507,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = customer
                 default_input_value = 'default-input-value'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         # Note that locality has no type nor name and we expect for the SimpleIO-level default value to be used
         data = Bunch()
@@ -523,12 +523,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.customer.name, data.customer.name)
-        self.assertEquals(input.customer.email.personal, data.customer.email.personal)
-        self.assertEquals(input.customer.email.business, data.customer.email.business)
-        self.assertEquals(input.customer.address.street, data.customer.address.street)
-        self.assertEquals(input.customer.address.locality.type, _default_input_value)
-        self.assertEquals(input.customer.address.locality.name, _default_input_value)
+        self.assertEqual(input.customer.name, data.customer.name)
+        self.assertEqual(input.customer.email.personal, data.customer.email.personal)
+        self.assertEqual(input.customer.email.business, data.customer.email.business)
+        self.assertEqual(input.customer.address.street, data.customer.address.street)
+        self.assertEqual(input.customer.address.locality.type, _default_input_value)
+        self.assertEqual(input.customer.address.locality.name, _default_input_value)
 
 # ################################################################################################################################
 
@@ -548,7 +548,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = customer
                 default_input_value = 'default-input-value'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         # Note that this locality has no type nor name but we expect for that Dict's default value to be used,
         # also, address has no street but since this Dict has no default value, again, SimpleIO one will be used.
@@ -564,12 +564,12 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.customer.name, data.customer.name)
-        self.assertEquals(input.customer.email.personal, data.customer.email.personal)
-        self.assertEquals(input.customer.email.business, data.customer.email.business)
-        self.assertEquals(input.customer.address.street, _default_input_value)
-        self.assertEquals(input.customer.address.locality.type, locality_default)
-        self.assertEquals(input.customer.address.locality.name, locality_default)
+        self.assertEqual(input.customer.name, data.customer.name)
+        self.assertEqual(input.customer.email.personal, data.customer.email.personal)
+        self.assertEqual(input.customer.email.business, data.customer.email.business)
+        self.assertEqual(input.customer.address.street, _default_input_value)
+        self.assertEqual(input.customer.address.locality.type, locality_default)
+        self.assertEqual(input.customer.address.locality.name, locality_default)
 
 # ################################################################################################################################
 
@@ -584,7 +584,7 @@ class JSONInputParsing(BaseSIOTestCase):
             class SimpleIO:
                 input = customer
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.customer = Bunch()
@@ -610,20 +610,20 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.customer.name, data.customer.name)
-        self.assertEquals(input.customer.email.value, data.customer.email.value)
-        self.assertEquals(input.customer.email.is_business, data.customer.email.is_business)
-        self.assertEquals(input.customer.email.join_date, dt_parse(data.customer.email.join_date))
+        self.assertEqual(input.customer.name, data.customer.name)
+        self.assertEqual(input.customer.email.value, data.customer.email.value)
+        self.assertEqual(input.customer.email.is_business, data.customer.email.is_business)
+        self.assertEqual(input.customer.email.join_date, dt_parse(data.customer.email.join_date))
         self.assertListEqual(input.customer.email.preferred_order, data.customer.email.preferred_order)
-        self.assertEquals(input.customer.address.locality.type, int(data.customer.address.locality.type))
-        self.assertEquals(input.customer.address.locality.name, data.customer.address.locality.name)
+        self.assertEqual(input.customer.address.locality.type, int(data.customer.address.locality.type))
+        self.assertEqual(input.customer.address.locality.name, data.customer.address.locality.name)
         self.assertIs(input.customer.address.locality.coords, data.customer.address.locality.coords)
-        self.assertEquals(input.customer.address.locality.geo_skip, decimal_Decimal(data.customer.address.locality.geo_skip))
-        self.assertEquals(input.customer.address.locality.geo_diff, float(data.customer.address.locality.geo_diff))
-        self.assertEquals(input.customer.address.street_id, uuid_UUID(data.customer.address.street_id))
-        self.assertEquals(input.customer.address.prefs, data.customer.address.prefs.split(','))
-        self.assertEquals(input.customer.address.since, dt_parse(data.customer.address.since))
-        self.assertEquals(input.customer.address.types, data.customer.address.types)
+        self.assertEqual(input.customer.address.locality.geo_skip, decimal_Decimal(data.customer.address.locality.geo_skip))
+        self.assertEqual(input.customer.address.locality.geo_diff, float(data.customer.address.locality.geo_diff))
+        self.assertEqual(input.customer.address.street_id, uuid_UUID(data.customer.address.street_id))
+        self.assertEqual(input.customer.address.prefs, data.customer.address.prefs.split(','))
+        self.assertEqual(input.customer.address.since, dt_parse(data.customer.address.since))
+        self.assertEqual(input.customer.address.types, data.customer.address.types)
         self.assertIs(input.customer.address.opaque1, data.customer.address.opaque1)
 
 # ################################################################################################################################
@@ -650,7 +650,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = customer
                 default_input_value = 'default-input-value'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         # Note that 'join_date', 'street_id', 'coords' and one of 'pos' keys are missing in input below,
         # the test ensures that default values are used in their place.
@@ -676,24 +676,24 @@ class JSONInputParsing(BaseSIOTestCase):
         input = MyService._sio.parse_input(data, DATA_FORMAT.JSON)
         self.assertIsInstance(input, Bunch)
 
-        self.assertEquals(input.customer.name, data.customer.name)
-        self.assertEquals(input.customer.email.value, data.customer.email.value)
-        self.assertEquals(input.customer.email.is_business, data.customer.email.is_business)
-        self.assertEquals(input.customer.email.join_date, _default_input_value)
+        self.assertEqual(input.customer.name, data.customer.name)
+        self.assertEqual(input.customer.email.value, data.customer.email.value)
+        self.assertEqual(input.customer.email.is_business, data.customer.email.is_business)
+        self.assertEqual(input.customer.email.join_date, _default_input_value)
 
         self.assertDictEqual(input.customer.email.preferred_order[0], data.customer.email.preferred_order[0])
-        self.assertEquals(input.customer.email.preferred_order[1].name, data.customer.email.preferred_order[1]['name'])
-        self.assertEquals(input.customer.email.preferred_order[1].pos, _default_input_value)
+        self.assertEqual(input.customer.email.preferred_order[1].name, data.customer.email.preferred_order[1]['name'])
+        self.assertEqual(input.customer.email.preferred_order[1].pos, _default_input_value)
 
-        self.assertEquals(input.customer.address.locality.type, int(data.customer.address.locality.type))
-        self.assertEquals(input.customer.address.locality.name, data.customer.address.locality.name)
-        self.assertEquals(input.customer.address.locality.coords, default_locality)
-        self.assertEquals(input.customer.address.locality.geo_skip, decimal_Decimal(data.customer.address.locality.geo_skip))
-        self.assertEquals(input.customer.address.locality.geo_diff, float(data.customer.address.locality.geo_diff))
-        self.assertEquals(input.customer.address.street_id, default_address)
-        self.assertEquals(input.customer.address.prefs, data.customer.address.prefs.split(','))
-        self.assertEquals(input.customer.address.since, dt_parse(data.customer.address.since))
-        self.assertEquals(input.customer.address.types, data.customer.address.types)
+        self.assertEqual(input.customer.address.locality.type, int(data.customer.address.locality.type))
+        self.assertEqual(input.customer.address.locality.name, data.customer.address.locality.name)
+        self.assertEqual(input.customer.address.locality.coords, default_locality)
+        self.assertEqual(input.customer.address.locality.geo_skip, decimal_Decimal(data.customer.address.locality.geo_skip))
+        self.assertEqual(input.customer.address.locality.geo_diff, float(data.customer.address.locality.geo_diff))
+        self.assertEqual(input.customer.address.street_id, default_address)
+        self.assertEqual(input.customer.address.prefs, data.customer.address.prefs.split(','))
+        self.assertEqual(input.customer.address.since, dt_parse(data.customer.address.since))
+        self.assertEqual(input.customer.address.types, data.customer.address.types)
         self.assertIs(input.customer.address.opaque1, data.customer.address.opaque1)
 
 # ################################################################################################################################
@@ -707,7 +707,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 class SkipEmpty:
                     input = True
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'
@@ -729,7 +729,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 input = 'aaa', 'bbb', '-ccc', '-ddd'
                 skip_empty_keys = True
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'
@@ -756,7 +756,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     input = True
                     force_empty_input = 'eee'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'
@@ -782,7 +782,7 @@ class JSONInputParsing(BaseSIOTestCase):
                     input = True
                     force_empty_input = 'eee', 'fff'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'
@@ -809,7 +809,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 class SkipEmpty:
                     input = 'ccc'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'
@@ -838,7 +838,7 @@ class JSONInputParsing(BaseSIOTestCase):
                 class SkipEmpty:
                     input = 'ccc', 'ddd'
 
-        CySimpleIO.attach_sio(self.get_server_config(), MyService)
+        CySimpleIO.attach_sio(None, self.get_server_config(), MyService)
 
         data = Bunch()
         data.aaa = 'aaa'

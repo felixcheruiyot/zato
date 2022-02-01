@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # stdlib
 import logging
@@ -24,17 +22,18 @@ logger = logging.getLogger(__name__)
 
 # ################################################################################################################################
 
-class HAProxyStats(object):
+class HAProxyStats:
     """ Used for communicating with HAProxy through its local UNIX socket interface.
     """
-    def __init__(self, socket_name=None):
+    socket_name: str
+
+    def __init__(self, socket_name='<default>'):
         self.socket_name = socket_name
 
-    def execute(self, command, extra="", timeout=200):
+    def execute(self, command, extra='', timeout=200) -> str:
         """ Executes a HAProxy command by sending a message to a HAProxy's local
         UNIX socket and waiting up to 'timeout' milliseconds for the response.
         """
-
         if extra:
             command = command + ' ' + extra
 
@@ -52,11 +51,13 @@ class HAProxyStats(object):
                 if data:
                     buff.write(data.decode('utf8') if isinstance(data, bytes) else data)
                 else:
-                    return buff.getvalue()
+                    break
         except Exception:
             logger.error('An error has occurred, e:`%s`', format_exc())
             raise
         finally:
             client.close()
+
+        return buff.getvalue()
 
 # ################################################################################################################################

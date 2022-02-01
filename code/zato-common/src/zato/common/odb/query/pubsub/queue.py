@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Copyright (C) 2019, Zato Source s.r.o. https://zato.io
+Copyright (C) 2021, Zato Source s.r.o. https://zato.io
 
 Licensed under LGPLv3, see LICENSE.txt for terms and conditions.
 """
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 # SQLAlchemy
 from sqlalchemy import func, update
@@ -16,6 +14,11 @@ from zato.common.api import PUBSUB
 from zato.common.odb.model import PubSubEndpointEnqueuedMessage, PubSubMessage, PubSubSubscription
 from zato.common.odb.query import count, _pubsub_queue_message
 from zato.common.util.time_ import utcnow_as_ms
+
+# ################################################################################################################################
+
+if 0:
+    from zato.common.typing_ import any_, strlistempty
 
 # ################################################################################################################################
 
@@ -53,7 +56,7 @@ def get_messages(session, cluster_id, sub_key, batch_size, now, _initialized=_in
                 'delivery_status': _waiting,
                 'delivery_time': now,
                 'delivery_count': PubSubEnqMsg.__table__.c.delivery_count + 1,
-                }).\
+            }).\
             where(PubSubEnqMsg.cluster_id).\
             where(PubSubEnqMsg.pub_msg_id.in_(msg_id_list))
         )
@@ -69,7 +72,7 @@ def _set_delivery_status(session, cluster_id, sub_key, msg_id_list, now, status)
         values({
             'delivery_status': status,
             'delivery_time': now,
-            }).\
+        }).\
         where(PubSubSubscription.sub_key==sub_key).\
         where(PubSubEnqMsg.cluster_id).\
         where(PubSubEnqMsg.sub_key==PubSubSubscription.sub_key).\
@@ -78,7 +81,14 @@ def _set_delivery_status(session, cluster_id, sub_key, msg_id_list, now, status)
 
 # ################################################################################################################################
 
-def set_to_delete(session, cluster_id, sub_key, msg_id_list, now, status=_to_delete):
+def set_to_delete(
+    session,     # type: any_
+    cluster_id,  # type: int
+    sub_key,     # type: str
+    msg_id_list, # type: strlistempty
+    now,         # type: float
+    status=_to_delete # type: int
+    ):
     """ Marks all input messages as to be deleted.
     """
     _set_delivery_status(session, cluster_id, sub_key, msg_id_list, now, status)
